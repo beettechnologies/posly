@@ -1,0 +1,310 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: dev
+        type: choice
+        options: [dev, stage, prod]
+      image_tag:
+        description: 'Docker image tag to deploy (default: latest sha)'
+        required: false
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: posly-server
+
+jobs:
+  build-and-push:
+    name: Build & Push Image
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: temurin
+          cache: gradle
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build server fat JAR
+        run: ./gradlew :server:buildFatJar --no-daemon -q
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Determine image tag
+        id: meta
+        run: |
+          TAG="${{ inputs.image_tag }}"
+          if [ -z "$TAG" ]; then
+            TAG="${{ github.sha }}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push Docker image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          IMAGE="$REGISTRY/${{ env.ECR_REPOSITORY }}:$TAG"
+          docker build -t "$IMAGE" -t "$REGISTRY/${{ env.ECR_REPOSITORY }}:latest" .
+          docker push "$IMAGE"
+          docker push "$REGISTRY/${{ env.ECR_REPOSITORY }}:latest"
+
+  deploy-dev:
+    name: Deploy → dev
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment:
+      name: dev
+      url: https://dev.posly.example.com
+    if: github.event_name == 'push' || inputs.environment == 'dev'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (dev)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.DEV_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.DEV_AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.DEV_DEPLOY_ROLE_ARN }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Deploy to ECS (dev)
+        id: deploy
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+          ECS_CLUSTER: posly-dev
+          ECS_SERVICE: posly-server-dev
+          TASK_FAMILY: posly-server-dev
+        run: |
+          IMAGE="$REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG"
+
+          # Fetch current task definition and update image
+          TASK_DEF=$(aws ecs describe-task-definition --task-definition "$TASK_FAMILY" \
+            --query 'taskDefinition' --output json)
+
+          NEW_TASK_DEF=$(echo "$TASK_DEF" | jq \
+            --arg IMAGE "$IMAGE" \
+            '.containerDefinitions[0].image = $IMAGE
+             | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')
+
+          NEW_REVISION=$(aws ecs register-task-definition \
+            --cli-input-json "$NEW_TASK_DEF" \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+
+          # Update the ECS service with the new task definition
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --task-definition "$NEW_REVISION" \
+            --force-new-deployment
+
+          # Store current task def for potential rollback
+          echo "previous_task_def=$TASK_FAMILY:$(echo "$TASK_DEF" | jq -r '.revision')" >> "$GITHUB_ENV"
+
+          # Wait for deployment to stabilise
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE"
+
+      - name: Run smoke tests (dev)
+        run: bash scripts/smoke-test.sh https://dev.posly.example.com
+
+      - name: Rollback dev on failure
+        if: failure()
+        env:
+          ECS_CLUSTER: posly-dev
+          ECS_SERVICE: posly-server-dev
+        run: |
+          echo "Deployment or smoke test failed – rolling back to ${{ env.previous_task_def }}"
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --task-definition "${{ env.previous_task_def }}" \
+            --force-new-deployment
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE"
+          echo "Rollback complete."
+
+  deploy-stage:
+    name: Deploy → stage
+    needs: [build-and-push, deploy-dev]
+    runs-on: ubuntu-latest
+    environment:
+      name: stage
+      url: https://stage.posly.example.com
+    if: |
+      (github.event_name == 'push' && needs.deploy-dev.result == 'success') ||
+      inputs.environment == 'stage'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (stage)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.STAGE_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.STAGE_AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.STAGE_DEPLOY_ROLE_ARN }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Deploy to ECS (stage)
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+          ECS_CLUSTER: posly-stage
+          ECS_SERVICE: posly-server-stage
+          TASK_FAMILY: posly-server-stage
+        run: |
+          IMAGE="$REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG"
+
+          TASK_DEF=$(aws ecs describe-task-definition --task-definition "$TASK_FAMILY" \
+            --query 'taskDefinition' --output json)
+
+          NEW_TASK_DEF=$(echo "$TASK_DEF" | jq \
+            --arg IMAGE "$IMAGE" \
+            '.containerDefinitions[0].image = $IMAGE
+             | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')
+
+          NEW_REVISION=$(aws ecs register-task-definition \
+            --cli-input-json "$NEW_TASK_DEF" \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --task-definition "$NEW_REVISION" \
+            --force-new-deployment
+
+          echo "previous_task_def=$TASK_FAMILY:$(echo "$TASK_DEF" | jq -r '.revision')" >> "$GITHUB_ENV"
+
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE"
+
+      - name: Run smoke tests (stage)
+        run: bash scripts/smoke-test.sh https://stage.posly.example.com
+
+      - name: Rollback stage on failure
+        if: failure()
+        env:
+          ECS_CLUSTER: posly-stage
+          ECS_SERVICE: posly-server-stage
+        run: |
+          echo "Deployment or smoke test failed – rolling back to ${{ env.previous_task_def }}"
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --task-definition "${{ env.previous_task_def }}" \
+            --force-new-deployment
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE"
+          echo "Rollback complete."
+
+  deploy-prod:
+    name: Deploy → prod
+    needs: [build-and-push, deploy-stage]
+    runs-on: ubuntu-latest
+    environment:
+      name: prod
+      url: https://posly.example.com
+    if: inputs.environment == 'prod'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (prod)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.PROD_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.PROD_AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.PROD_DEPLOY_ROLE_ARN }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Deploy to ECS (prod)
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
+          ECS_CLUSTER: posly-prod
+          ECS_SERVICE: posly-server-prod
+          TASK_FAMILY: posly-server-prod
+        run: |
+          IMAGE="$REGISTRY/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG"
+
+          TASK_DEF=$(aws ecs describe-task-definition --task-definition "$TASK_FAMILY" \
+            --query 'taskDefinition' --output json)
+
+          NEW_TASK_DEF=$(echo "$TASK_DEF" | jq \
+            --arg IMAGE "$IMAGE" \
+            '.containerDefinitions[0].image = $IMAGE
+             | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')
+
+          NEW_REVISION=$(aws ecs register-task-definition \
+            --cli-input-json "$NEW_TASK_DEF" \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --task-definition "$NEW_REVISION" \
+            --force-new-deployment
+
+          echo "previous_task_def=$TASK_FAMILY:$(echo "$TASK_DEF" | jq -r '.revision')" >> "$GITHUB_ENV"
+
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE"
+
+      - name: Run smoke tests (prod)
+        run: bash scripts/smoke-test.sh https://posly.example.com
+
+      - name: Rollback prod on failure
+        if: failure()
+        env:
+          ECS_CLUSTER: posly-prod
+          ECS_SERVICE: posly-server-prod
+        run: |
+          echo "Deployment or smoke test failed – rolling back to ${{ env.previous_task_def }}"
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --task-definition "${{ env.previous_task_def }}" \
+            --force-new-deployment
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE"
+          echo "Rollback complete."

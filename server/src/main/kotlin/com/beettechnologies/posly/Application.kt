@@ -16,5 +16,8 @@ fun Application.module() {
         get("/") {
             call.respondText(sayHello("Ktor"))
         }
+        get("/health") {
+            call.respondText("OK")
+        }
     }
 }
