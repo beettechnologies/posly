@@ -23,6 +23,8 @@ jobs:
   build-and-push:
     name: Build & Push Image
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       image_tag: ${{ steps.meta.outputs.tag }}
     steps:
@@ -75,6 +77,8 @@ jobs:
     name: Deploy → dev
     needs: build-and-push
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     environment:
       name: dev
       url: https://dev.posly.example.com
@@ -157,6 +161,8 @@ jobs:
     name: Deploy → stage
     needs: [build-and-push, deploy-dev]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     environment:
       name: stage
       url: https://stage.posly.example.com
@@ -236,6 +242,8 @@ jobs:
     name: Deploy → prod
     needs: [build-and-push, deploy-stage]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     environment:
       name: prod
       url: https://posly.example.com
