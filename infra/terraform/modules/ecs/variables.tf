@@ -89,6 +89,18 @@ variable "log_retention_days" {
   default     = 30
 }
 
+variable "observability_metrics_path" {
+  description = "HTTP path exposed for Prometheus scraping"
+  type        = string
+  default     = "/metrics"
+}
+
+variable "observability_otlp_endpoint" {
+  description = "Optional OTLP endpoint for exporting traces"
+  type        = string
+  default     = ""
+}
+
 variable "create_ecr" {
   description = "Whether to create the ECR repository (only needed once, typically in dev)"
   type        = bool

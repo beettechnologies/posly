@@ -245,12 +245,40 @@ terraform apply
 | ECS service events | AWS ECS console → Cluster → Service → Events tab |
 | ALB access logs | Enable in the ALB attributes if needed |
 | Container Insights | AWS CloudWatch → Container Insights → ECS |
+| Prometheus metrics | `GET https://<env-host>/metrics` or scrape the task target on port `8080` |
+| Grafana dashboards | Import `/home/runner/work/posly/posly/infra/observability/grafana/auth-dashboard.json` and `/home/runner/work/posly/posly/infra/observability/grafana/device-dashboard.json` |
+| Prometheus alerts | Load `/home/runner/work/posly/posly/infra/observability/prometheus/alerts.yml` into the Prometheus or Alertmanager stack |
+| Traces | Query Jaeger or the shared OTLP backend with service `posly-server` |
 
 Stream live logs:
 
 ```bash
 aws logs tail "/posly/dev/server" --follow
 ```
+
+### Correlation IDs and trace flow
+
+- Every inbound request accepts or generates `X-Correlation-Id`.
+- The service returns both `X-Correlation-Id` and `X-Trace-Id` in response headers.
+- Structured JSON logs include `correlationId`, `traceId`, `spanId`, `service`, and `environment`.
+- Search Jaeger using `X-Trace-Id` or the `correlation.id` span attribute.
+
+### Prometheus and Grafana bootstrap
+
+Use `/home/runner/work/posly/posly/infra/observability/prometheus/scrape-config.yml` as the baseline scrape config.
+Set the Terraform variable `observability_otlp_endpoint` for each environment to export spans to the shared collector or Jaeger OTLP endpoint.
+
+### Suggested validation
+
+1. Send a synthetic request with a known `X-Correlation-Id`.
+2. Confirm `/metrics` shows `ktor_http_server_requests_seconds_*` and the relevant `posly_*` business counter.
+3. Confirm CloudWatch log entries contain the same `correlationId` and `traceId`.
+4. Find the trace in Jaeger using `X-Trace-Id` or `correlation.id`.
+5. Trigger repeated auth failures until `PoslyAuthFailureSpike` fires.
+
+### Scope note
+
+This repository currently contains auth and device flows only. A payments dashboard must be added in the payments service repository or after that service is introduced here.
 
 ---
 

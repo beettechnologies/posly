@@ -71,7 +71,7 @@ fun Application.module() {
     }
 
     install(CallId) {
-        header(CorrelationIdHeader)
+        retrieveFromHeader(CorrelationIdHeader)
         generate { UUID.randomUUID().toString() }
         verify { it.isNotBlank() && it.length <= 128 }
         replyToHeader(CorrelationIdHeader)
@@ -113,7 +113,6 @@ fun Application.module() {
             put("service", observability.config.serviceName)
             put("environment", observability.config.environment)
         }
-        call.response.headers.append(CorrelationIdHeader, correlationId)
         call.response.headers.append(TraceIdHeader, span.spanContext.traceId)
 
         try {

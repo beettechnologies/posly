@@ -1,0 +1,62 @@
+groups:
+  - name: posly-server
+    rules:
+      - alert: PoslyServerTargetDown
+        expr: up{job="posly-server"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          service: posly-server
+          team: sre
+        annotations:
+          summary: Posly server target is down
+          description: Prometheus has been unable to scrape the posly-server target for 5 minutes.
+          runbook_url: docs/runbook-deploy.md#monitoring--logs
+
+      - alert: PoslyServerHigh5xxRate
+        expr: |
+          sum(rate(ktor_http_server_requests_seconds_count{job="posly-server",status=~"5.."}[5m]))
+          /
+          clamp_min(sum(rate(ktor_http_server_requests_seconds_count{job="posly-server"}[5m])), 1)
+          > 0.05
+        for: 10m
+        labels:
+          severity: critical
+          service: posly-server
+          team: sre
+        annotations:
+          summary: Posly server is returning elevated 5xx responses
+          description: More than 5% of posly-server requests are failing with 5xx responses for 10 minutes.
+          runbook_url: docs/runbook-deploy.md#monitoring--logs
+
+      - alert: PoslyServerHighLatencyP95
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(ktor_http_server_requests_seconds_bucket{job="posly-server"}[5m]))
+          ) > 1.5
+        for: 10m
+        labels:
+          severity: warning
+          service: posly-server
+          team: sre
+        annotations:
+          summary: Posly server latency p95 is elevated
+          description: The 95th percentile request latency has exceeded 1.5 seconds for 10 minutes.
+          runbook_url: docs/runbook-deploy.md#monitoring--logs
+
+      - alert: PoslyAuthFailureSpike
+        expr: |
+          sum(rate(posly_auth_login_total{result="invalid_credentials"}[5m]))
+          /
+          clamp_min(sum(rate(posly_auth_login_total[5m])), 1)
+          > 0.25
+        for: 10m
+        labels:
+          severity: warning
+          service: posly-server
+          team: sre
+        annotations:
+          summary: Posly auth failures are spiking
+          description: Invalid-credential login attempts are above 25% of total login traffic for 10 minutes.
+          runbook_url: docs/runbook-deploy.md#monitoring--logs

@@ -29,3 +29,9 @@ variable "ci_external_id" {
   type        = string
   sensitive   = true
 }
+
+variable "observability_otlp_endpoint" {
+  description = "Optional OTLP endpoint for trace export"
+  type        = string
+  default     = ""
+}

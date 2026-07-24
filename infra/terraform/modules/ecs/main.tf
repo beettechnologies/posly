@@ -98,8 +98,18 @@ resource "aws_ecs_task_definition" "server" {
 
     environment = [
       { name = "ENVIRONMENT", value = var.env },
-      { name = "PORT",        value = "8080"  }
+      { name = "PORT",        value = "8080"  },
+      { name = "OBSERVABILITY_SERVICE_NAME", value = "posly-server" },
+      { name = "OBSERVABILITY_METRICS_PATH", value = var.observability_metrics_path },
+      { name = "OTEL_EXPORTER_OTLP_ENDPOINT", value = var.observability_otlp_endpoint }
     ]
+
+    dockerLabels = {
+      "prometheus.io/scrape" = "true"
+      "prometheus.io/path"   = var.observability_metrics_path
+      "prometheus.io/port"   = "8080"
+      "service.name"         = "posly-server"
+    }
 
     secrets = [
       {

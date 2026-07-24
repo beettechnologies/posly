@@ -95,6 +95,8 @@ module "ecs" {
   min_capacity       = 1
   max_capacity       = 3
   log_retention_days = 14
+  observability_metrics_path = "/metrics"
+  observability_otlp_endpoint = var.observability_otlp_endpoint
   create_ecr         = true  # ECR repository created once in dev
 
   tags = local.common_tags

@@ -83,6 +83,8 @@ module "ecs" {
   min_capacity       = 1
   max_capacity       = 4
   log_retention_days = 30
+  observability_metrics_path = "/metrics"
+  observability_otlp_endpoint = var.observability_otlp_endpoint
   create_ecr         = false
 
   tags = local.common_tags
