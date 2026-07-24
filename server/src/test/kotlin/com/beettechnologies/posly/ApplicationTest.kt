@@ -17,4 +17,14 @@ class ApplicationTest {
         assertEquals(HttpStatusCode.OK, response.status)
         assertEquals("Hello, Ktor!", response.bodyAsText())
     }
+
+    @Test
+    fun testHealth() = testApplication {
+        application {
+            module()
+        }
+        val response = client.get("/health")
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals("OK", response.bodyAsText())
+    }
 }
