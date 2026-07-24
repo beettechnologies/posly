@@ -12,7 +12,9 @@ enum class AuditEvent {
     MFA_CHALLENGE,
     MFA_SUCCESS,
     MFA_FAILURE,
-    ACCESS_DENIED
+    ACCESS_DENIED,
+    DEVICE_ENROLLMENT_SUCCESS,
+    DEVICE_ENROLLMENT_FAILURE
 }
 
 data class AuditRecord(

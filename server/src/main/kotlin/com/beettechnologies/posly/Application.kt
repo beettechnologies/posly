@@ -7,6 +7,8 @@ import com.beettechnologies.posly.auth.ErrorResponse
 import com.beettechnologies.posly.auth.JwtService
 import com.beettechnologies.posly.auth.UserService
 import com.beettechnologies.posly.auth.configureAuthRoutes
+import com.beettechnologies.posly.devices.DeviceRegistryService
+import com.beettechnologies.posly.devices.configureDeviceRoutes
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.application.*
@@ -37,6 +39,7 @@ fun Application.module() {
     val jwtService = JwtService(jwtSecret, jwtIssuer, jwtAudience, accessExpMs, refreshExpMs, mfaExpMs)
     val userService = UserService()
     val authService = AuthService(userService, jwtService)
+    val deviceRegistryService = DeviceRegistryService()
 
     install(ContentNegotiation) {
         json(Json { ignoreUnknownKeys = true })
@@ -77,4 +80,5 @@ fun Application.module() {
     }
 
     configureAuthRoutes(authService)
+    configureDeviceRoutes(deviceRegistryService)
 }
