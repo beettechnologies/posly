@@ -1,6 +1,8 @@
 package com.beettechnologies.posly.auth
 
 import com.beettechnologies.posly.module
+import com.beettechnologies.posly.observability.AppObservability
+import com.beettechnologies.posly.observability.ObservabilityConfig
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
@@ -12,6 +14,14 @@ import kotlinx.serialization.json.*
 import kotlin.test.*
 
 class AuthRoutesTest {
+
+    private fun testObservability() = AppObservability.create(
+        ObservabilityConfig(
+            serviceName = "posly-server-test",
+            environment = "test",
+            metricsPath = "/metrics"
+        )
+    )
 
     private fun ApplicationTestBuilder.configureApp() {
         environment {
@@ -192,7 +202,7 @@ class AuthRoutesTest {
         )
         val userService = UserService()
         userService.createUser("mfauser", "mfapass123", mfaEnabled = true, mfaSecret = mfaSecret)
-        val authService = AuthService(userService, jwtService)
+        val authService = AuthService(userService, jwtService, testObservability())
 
         // Login should return MFA required
         val loginResult = authService.login("mfauser", "mfapass123")
@@ -221,7 +231,7 @@ class AuthRoutesTest {
         )
         val userService = UserService()
         userService.createUser("mfauser2", "mfapass123", mfaEnabled = true, mfaSecret = mfaSecret)
-        val authService = AuthService(userService, jwtService)
+        val authService = AuthService(userService, jwtService, testObservability())
 
         val loginResult = authService.login("mfauser2", "mfapass123")
         assertIs<AuthResult.MfaRequired>(loginResult)

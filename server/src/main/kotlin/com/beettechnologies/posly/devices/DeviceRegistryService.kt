@@ -2,6 +2,9 @@ package com.beettechnologies.posly.devices
 
 import com.beettechnologies.posly.audit.AuditEvent
 import com.beettechnologies.posly.audit.AuditService
+import com.beettechnologies.posly.observability.AppObservability
+import io.opentelemetry.api.trace.StatusCode
+import io.opentelemetry.api.trace.SpanKind
 import java.security.SecureRandom
 import java.time.Instant
 import java.util.UUID
@@ -79,7 +82,8 @@ sealed class EnrollDeviceResult {
 
 class DeviceRegistryService(
     private val nowProvider: () -> Instant = { Instant.now() },
-    private val secureRandom: SecureRandom = SecureRandom()
+    private val secureRandom: SecureRandom = SecureRandom(),
+    private val observability: AppObservability
 ) {
     private val lock = Any()
     private val pairingCodes = ConcurrentHashMap<String, PairingCode>()
@@ -87,120 +91,193 @@ class DeviceRegistryService(
     private val auditTrail = mutableListOf<DeviceAuditRecord>()
 
     fun createPairCode(storeId: String, createdBy: String, expiresInSeconds: Long? = null): PairingCode {
-        val now = nowProvider()
-        val ttl = expiresInSeconds ?: DEFAULT_TTL_SECONDS
-        val expiresAt = now.plusSeconds(ttl.coerceAtLeast(0))
+        return observability.inSpan(
+            name = "devices.pair_code.create",
+            kind = SpanKind.INTERNAL,
+            attributes = mapOf("store.id" to storeId)
+        ) { span ->
+            val now = nowProvider()
+            val ttl = expiresInSeconds ?: DEFAULT_TTL_SECONDS
+            val expiresAt = now.plusSeconds(ttl.coerceAtLeast(0))
 
-        repeat(MAX_CREATE_ATTEMPTS) {
-            val code = randomToken(PAIRING_CODE_LENGTH, PAIRING_CODE_ALPHABET)
-            val pairingCode = PairingCode(
-                code = code,
-                storeId = storeId,
-                createdBy = createdBy,
-                createdAt = now,
-                expiresAt = expiresAt
-            )
-            if (pairingCodes.putIfAbsent(code, pairingCode) == null) {
-                recordAudit(
-                    DeviceAuditEvent.PAIR_CODE_CREATED,
+            repeat(MAX_CREATE_ATTEMPTS) {
+                val code = randomToken(PAIRING_CODE_LENGTH, PAIRING_CODE_ALPHABET)
+                val pairingCode = PairingCode(
                     code = code,
                     storeId = storeId,
-                    actorId = createdBy,
-                    detail = "expiresAt=$expiresAt"
+                    createdBy = createdBy,
+                    createdAt = now,
+                    expiresAt = expiresAt
                 )
-                return pairingCode
+                if (pairingCodes.putIfAbsent(code, pairingCode) == null) {
+                    observability.recordDevicePairCode("created")
+                    span.setAttribute("pair_code.result", "created")
+                    recordAudit(
+                        DeviceAuditEvent.PAIR_CODE_CREATED,
+                        code = code,
+                        storeId = storeId,
+                        actorId = createdBy,
+                        detail = "expiresAt=$expiresAt"
+                    )
+                    return@inSpan pairingCode
+                }
             }
+            span.setStatus(StatusCode.ERROR)
+            error("Failed to allocate unique pairing code")
         }
-        error("Failed to allocate unique pairing code")
     }
 
     fun validatePairCode(code: String): PairingCodeValidationResult {
-        val pairingCode = pairingCodes[code] ?: return PairingCodeValidationResult.NotFound
-        return validatePairingCodeState(pairingCode).also {
-            val detail = when (it) {
-                is PairingCodeValidationResult.Valid -> "valid"
-                PairingCodeValidationResult.NotFound -> "not_found"
-                PairingCodeValidationResult.Expired -> "expired"
-                PairingCodeValidationResult.Used -> "used"
-                PairingCodeValidationResult.Revoked -> "revoked"
+        return observability.inSpan(name = "devices.pair_code.validate", kind = SpanKind.INTERNAL) { span ->
+            val pairingCode = pairingCodes[code]
+            if (pairingCode == null) {
+                observability.recordDevicePairCode("not_found")
+                span.setAttribute("pair_code.result", "not_found")
+                span.setStatus(StatusCode.ERROR)
+                return@inSpan PairingCodeValidationResult.NotFound
             }
-            recordAudit(
-                DeviceAuditEvent.PAIR_CODE_VALIDATED,
-                code = code,
-                storeId = pairingCode.storeId,
-                detail = detail
-            )
+            span.setAttribute("store.id", pairingCode.storeId)
+            validatePairingCodeState(pairingCode).also {
+                val detail = when (it) {
+                    is PairingCodeValidationResult.Valid -> "valid"
+                    PairingCodeValidationResult.NotFound -> "not_found"
+                    PairingCodeValidationResult.Expired -> "expired"
+                    PairingCodeValidationResult.Used -> "used"
+                    PairingCodeValidationResult.Revoked -> "revoked"
+                }
+                observability.recordDevicePairCode(detail)
+                if (detail != "valid") {
+                    span.setStatus(StatusCode.ERROR)
+                }
+                span.setAttribute("pair_code.result", detail)
+                recordAudit(
+                    DeviceAuditEvent.PAIR_CODE_VALIDATED,
+                    code = code,
+                    storeId = pairingCode.storeId,
+                    detail = detail
+                )
+            }
         }
     }
 
     fun revokePairCode(code: String, revokedBy: String): PairCodeRevokeResult {
-        synchronized(lock) {
-            val pairingCode = pairingCodes[code] ?: return PairCodeRevokeResult.NotFound
-            if (pairingCode.usedAt != null) return PairCodeRevokeResult.AlreadyUsed
-            if (pairingCode.revokedAt != null) return PairCodeRevokeResult.AlreadyRevoked
+        return observability.inSpan(name = "devices.pair_code.revoke", kind = SpanKind.INTERNAL) { span ->
+            synchronized(lock) {
+                val pairingCode = pairingCodes[code]
+                if (pairingCode == null) {
+                    observability.recordDevicePairCode("revoke_not_found")
+                    span.setAttribute("pair_code.result", "not_found")
+                    span.setStatus(StatusCode.ERROR)
+                    return@inSpan PairCodeRevokeResult.NotFound
+                }
+                span.setAttribute("store.id", pairingCode.storeId)
+                if (pairingCode.usedAt != null) {
+                    observability.recordDevicePairCode("revoke_used")
+                    span.setAttribute("pair_code.result", "already_used")
+                    span.setStatus(StatusCode.ERROR)
+                    return@inSpan PairCodeRevokeResult.AlreadyUsed
+                }
+                if (pairingCode.revokedAt != null) {
+                    observability.recordDevicePairCode("revoke_revoked")
+                    span.setAttribute("pair_code.result", "already_revoked")
+                    span.setStatus(StatusCode.ERROR)
+                    return@inSpan PairCodeRevokeResult.AlreadyRevoked
+                }
 
-            val revokedCode = pairingCode.copy(revokedAt = nowProvider())
-            pairingCodes[code] = revokedCode
-            recordAudit(
-                DeviceAuditEvent.PAIR_CODE_REVOKED,
-                code = code,
-                storeId = pairingCode.storeId,
-                actorId = revokedBy
-            )
-            return PairCodeRevokeResult.Revoked
+                val revokedCode = pairingCode.copy(revokedAt = nowProvider())
+                pairingCodes[code] = revokedCode
+                observability.recordDevicePairCode("revoked")
+                span.setAttribute("pair_code.result", "revoked")
+                recordAudit(
+                    DeviceAuditEvent.PAIR_CODE_REVOKED,
+                    code = code,
+                    storeId = pairingCode.storeId,
+                    actorId = revokedBy
+                )
+                PairCodeRevokeResult.Revoked
+            }
         }
     }
 
     fun enrollDevice(code: String, requestedStoreId: String?, name: String?): EnrollDeviceResult {
-        synchronized(lock) {
-            val pairingCode = pairingCodes[code] ?: return EnrollDeviceResult.PairCodeNotFound
-            when (validatePairingCodeState(pairingCode)) {
-                PairingCodeValidationResult.NotFound -> return EnrollDeviceResult.PairCodeNotFound
-                PairingCodeValidationResult.Expired -> {
-                    rejectEnrollment(code, pairingCode.storeId, "Pairing code expired")
-                    return EnrollDeviceResult.PairCodeExpired
+        return observability.inSpan(name = "devices.enroll", kind = SpanKind.INTERNAL) { span ->
+            synchronized(lock) {
+                val pairingCode = pairingCodes[code]
+                if (pairingCode == null) {
+                    observability.recordDeviceEnrollment("pair_code_not_found")
+                    span.setAttribute("device.enrollment_result", "pair_code_not_found")
+                    span.setStatus(StatusCode.ERROR)
+                    return@inSpan EnrollDeviceResult.PairCodeNotFound
                 }
-                PairingCodeValidationResult.Used -> {
-                    rejectEnrollment(code, pairingCode.storeId, "Pairing code already used")
-                    return EnrollDeviceResult.PairCodeUsed
+                span.setAttribute("store.id", pairingCode.storeId)
+                when (validatePairingCodeState(pairingCode)) {
+                    PairingCodeValidationResult.NotFound -> {
+                        observability.recordDeviceEnrollment("pair_code_not_found")
+                        span.setAttribute("device.enrollment_result", "pair_code_not_found")
+                        span.setStatus(StatusCode.ERROR)
+                        return@inSpan EnrollDeviceResult.PairCodeNotFound
+                    }
+                    PairingCodeValidationResult.Expired -> {
+                        observability.recordDeviceEnrollment("expired")
+                        span.setAttribute("device.enrollment_result", "expired")
+                        span.setStatus(StatusCode.ERROR)
+                        rejectEnrollment(pairingCode.storeId, "Pairing code expired")
+                        return@inSpan EnrollDeviceResult.PairCodeExpired
+                    }
+                    PairingCodeValidationResult.Used -> {
+                        observability.recordDeviceEnrollment("used")
+                        span.setAttribute("device.enrollment_result", "used")
+                        span.setStatus(StatusCode.ERROR)
+                        rejectEnrollment(pairingCode.storeId, "Pairing code already used")
+                        return@inSpan EnrollDeviceResult.PairCodeUsed
+                    }
+                    PairingCodeValidationResult.Revoked -> {
+                        observability.recordDeviceEnrollment("revoked")
+                        span.setAttribute("device.enrollment_result", "revoked")
+                        span.setStatus(StatusCode.ERROR)
+                        rejectEnrollment(pairingCode.storeId, "Pairing code revoked")
+                        return@inSpan EnrollDeviceResult.PairCodeRevoked
+                    }
+                    is PairingCodeValidationResult.Valid -> Unit
                 }
-                PairingCodeValidationResult.Revoked -> {
-                    rejectEnrollment(code, pairingCode.storeId, "Pairing code revoked")
-                    return EnrollDeviceResult.PairCodeRevoked
+
+                if (requestedStoreId != null && requestedStoreId != pairingCode.storeId) {
+                    observability.recordDeviceEnrollment("store_mismatch")
+                    span.setAttribute("device.enrollment_result", "store_mismatch")
+                    span.setStatus(StatusCode.ERROR)
+                    rejectEnrollment(pairingCode.storeId, "Store mismatch")
+                    return@inSpan EnrollDeviceResult.StoreMismatch
                 }
-                is PairingCodeValidationResult.Valid -> Unit
+
+                val now = nowProvider()
+                val deviceId = UUID.randomUUID().toString()
+                val device = DeviceRecord(
+                    id = deviceId,
+                    storeId = pairingCode.storeId,
+                    name = name?.takeIf { it.isNotBlank() } ?: "Store device",
+                    enrolledAt = now,
+                    clientId = "dev_${randomToken(16, CREDENTIAL_ALPHABET)}",
+                    clientSecret = randomToken(CLIENT_SECRET_LENGTH, CREDENTIAL_ALPHABET)
+                )
+                devices[deviceId] = device
+                pairingCodes[code] = pairingCode.copy(usedAt = now, deviceId = deviceId)
+
+                observability.recordDeviceEnrollment("success")
+                span.setAttribute("device.id", deviceId)
+                span.setAttribute("device.enrollment_result", "success")
+                recordAudit(
+                    DeviceAuditEvent.DEVICE_ENROLLED,
+                    code = code,
+                    deviceId = deviceId,
+                    storeId = pairingCode.storeId,
+                    detail = "name=${device.name}"
+                )
+                AuditService.record(
+                    AuditEvent.DEVICE_ENROLLMENT_SUCCESS,
+                    detail = "deviceId=$deviceId storeId=${pairingCode.storeId}"
+                )
+                EnrollDeviceResult.Success(device)
             }
-
-            if (requestedStoreId != null && requestedStoreId != pairingCode.storeId) {
-                rejectEnrollment(code, pairingCode.storeId, "Store mismatch")
-                return EnrollDeviceResult.StoreMismatch
-            }
-
-            val now = nowProvider()
-            val deviceId = UUID.randomUUID().toString()
-            val device = DeviceRecord(
-                id = deviceId,
-                storeId = pairingCode.storeId,
-                name = name?.takeIf { it.isNotBlank() } ?: "Store device",
-                enrolledAt = now,
-                clientId = "dev_${randomToken(16, CREDENTIAL_ALPHABET)}",
-                clientSecret = randomToken(CLIENT_SECRET_LENGTH, CREDENTIAL_ALPHABET)
-            )
-            devices[deviceId] = device
-            pairingCodes[code] = pairingCode.copy(usedAt = now, deviceId = deviceId)
-
-            recordAudit(
-                DeviceAuditEvent.DEVICE_ENROLLED,
-                code = code,
-                deviceId = deviceId,
-                storeId = pairingCode.storeId,
-                detail = "name=${device.name}"
-            )
-            AuditService.record(
-                AuditEvent.DEVICE_ENROLLMENT_SUCCESS,
-                detail = "deviceId=$deviceId storeId=${pairingCode.storeId}"
-            )
-            return EnrollDeviceResult.Success(device)
         }
     }
 
@@ -216,14 +293,13 @@ class DeviceRegistryService(
         }
     }
 
-    private fun rejectEnrollment(code: String, storeId: String, reason: String) {
+    private fun rejectEnrollment(storeId: String, reason: String) {
         recordAudit(
             DeviceAuditEvent.ENROLLMENT_REJECTED,
-            code = code,
             storeId = storeId,
             detail = reason
         )
-        AuditService.record(AuditEvent.DEVICE_ENROLLMENT_FAILURE, detail = "code=$code reason=$reason")
+        AuditService.record(AuditEvent.DEVICE_ENROLLMENT_FAILURE, detail = "storeId=$storeId reason=$reason")
     }
 
     private fun recordAudit(
