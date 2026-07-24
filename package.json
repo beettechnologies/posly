@@ -1,0 +1,14 @@
+{
+  "name": "Posly",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "app/webApp",
+    "app/sharedLogic/build/dist/js/developmentLibrary"
+  ],
+  "scripts": {
+    "build:shared": "./gradlew :app:sharedLogic:jsBrowserDevelopmentLibraryDistribution",
+    "build": "npm run build:shared && npm run build -w webApp",
+    "start": "npm run build:shared && npm run start -w webApp"
+  }
+}
