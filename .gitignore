@@ -41,3 +41,6 @@ local.properties
 # IntelliJ IDE
 .idea/
 out/
+
+# Xcode
+xcuserdata/

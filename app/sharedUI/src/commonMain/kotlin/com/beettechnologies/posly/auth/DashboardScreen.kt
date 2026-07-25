@@ -15,9 +15,18 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 
-/** Placeholder landing screen; the real POS dashboard is out of scope for this ticket. */
+/**
+ * Landing screen after login. The admin actions below are shown regardless of
+ * role; the server enforces ADMIN-only access and the destination screens
+ * surface a "you don't have permission" message on 403 rather than the
+ * dashboard trying to duplicate that check client-side.
+ */
 @Composable
-fun DashboardScreen(authRepository: AuthRepository = koinInject()) {
+fun DashboardScreen(
+    onManageStores: () -> Unit,
+    onManageTaxProfiles: () -> Unit,
+    authRepository: AuthRepository = koinInject()
+) {
     val scope = rememberCoroutineScope()
 
     Column(
@@ -32,6 +41,12 @@ fun DashboardScreen(authRepository: AuthRepository = koinInject()) {
             style = MaterialTheme.typography.headlineSmall,
             modifier = Modifier.padding(bottom = 24.dp)
         )
+        Button(onClick = onManageStores, modifier = Modifier.padding(bottom = 12.dp)) {
+            Text("Manage Stores")
+        }
+        Button(onClick = onManageTaxProfiles, modifier = Modifier.padding(bottom = 24.dp)) {
+            Text("Manage Tax Profiles")
+        }
         Button(onClick = { scope.launch { authRepository.logout() } }) {
             Text("Log out")
         }

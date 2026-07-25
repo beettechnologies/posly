@@ -13,6 +13,10 @@ import com.beettechnologies.posly.observability.configureObservability
 import com.beettechnologies.posly.products.ProductService
 import com.beettechnologies.posly.products.configureProductRoutes
 import com.beettechnologies.posly.products.search.configureSearchRoutes
+import com.beettechnologies.posly.stores.StoreService
+import com.beettechnologies.posly.stores.TaxProfileService
+import com.beettechnologies.posly.stores.configureStoreRoutes
+import com.beettechnologies.posly.stores.configureTaxProfileRoutes
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.application.*
@@ -42,6 +46,8 @@ fun Application.module() {
     val authService = AuthService(userService, jwtService)
     val deviceRegistryService = DeviceRegistryService()
     val productService = ProductService()
+    val taxProfileService = TaxProfileService()
+    val storeService = StoreService(taxProfileService)
 
     configureObservability()
 
@@ -87,4 +93,6 @@ fun Application.module() {
     configureDeviceRoutes(deviceRegistryService)
     configureProductRoutes(productService)
     configureSearchRoutes(productService)
+    configureStoreRoutes(storeService)
+    configureTaxProfileRoutes(taxProfileService)
 }
