@@ -16,6 +16,9 @@ import com.beettechnologies.posly.devices.configureDeviceRoutes
 import com.beettechnologies.posly.inventory.InventoryService
 import com.beettechnologies.posly.inventory.configureInventoryRoutes
 import com.beettechnologies.posly.observability.configureObservability
+import com.beettechnologies.posly.payments.PaymentGatewayService
+import com.beettechnologies.posly.payments.SimulatorPaymentGateway
+import com.beettechnologies.posly.payments.configurePaymentRoutes
 import com.beettechnologies.posly.products.ProductService
 import com.beettechnologies.posly.products.configureProductRoutes
 import com.beettechnologies.posly.products.search.configureSearchRoutes
@@ -57,6 +60,8 @@ fun Application.module() {
     val inventoryService = InventoryService(productService, storeService)
     val orderService = OrderService()
     val cartService = CartService(productService, storeService, taxProfileService, orderService)
+    val webhookSecret = environment.config.config("payments").property("webhookSecret").getString()
+    val paymentGatewayService = PaymentGatewayService(SimulatorPaymentGateway(), orderService, webhookSecret)
 
     configureObservability()
 
@@ -107,4 +112,5 @@ fun Application.module() {
     configureInventoryRoutes(inventoryService)
     configureCartRoutes(cartService)
     configureOrderRoutes(orderService)
+    configurePaymentRoutes(paymentGatewayService)
 }

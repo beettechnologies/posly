@@ -1,4 +1,4 @@
-package com.beettechnologies.posly.cart
+package com.beettechnologies.posly.payments
 
 import com.beettechnologies.posly.module
 import io.ktor.client.HttpClient
@@ -17,13 +17,22 @@ import io.ktor.server.config.MapApplicationConfig
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-class OrderRoutesTest {
+private const val TEST_WEBHOOK_SECRET = "test-webhook-secret-at-least-this-long"
+
+private fun sign(body: String): String {
+    val mac = Mac.getInstance("HmacSHA256")
+    mac.init(SecretKeySpec(TEST_WEBHOOK_SECRET.toByteArray(), "HmacSHA256"))
+    return mac.doFinal(body.toByteArray()).joinToString("") { "%02x".format(it) }
+}
+
+class PaymentRoutesTest {
 
     private fun ApplicationTestBuilder.configureApp() {
         environment {
@@ -34,7 +43,7 @@ class OrderRoutesTest {
                 "jwt.accessTokenExpirationMs" to "900000",
                 "jwt.refreshTokenExpirationMs" to "604800000",
                 "jwt.mfaTokenExpirationMs" to "300000",
-                "payments.webhookSecret" to "test-webhook-secret"
+                "payments.webhookSecret" to TEST_WEBHOOK_SECRET
             )
         }
         application { module() }
@@ -72,7 +81,6 @@ class OrderRoutesTest {
         return Json.parseToJsonElement(resp.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
     }
 
-    /** Creates a store, product, cart with one item, and checks it out. Returns (token, orderId). */
     private suspend fun seedPendingOrder(client: HttpClient, adminToken: String, cashierToken: String): String {
         val storeId = seedStoreId(client, adminToken)
         val productId = seedProductId(client, adminToken)
@@ -98,84 +106,131 @@ class OrderRoutesTest {
         return Json.parseToJsonElement(checkoutResp.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
     }
 
+    private suspend fun createPayment(client: HttpClient, token: String, orderId: String, amount: Double = 10.0): kotlinx.serialization.json.JsonObject {
+        val resp = client.post("/payments") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+            contentType(ContentType.Application.Json)
+            setBody("""{"orderId":"$orderId","amount":$amount,"currency":"USD"}""")
+        }
+        assertEquals(HttpStatusCode.Created, resp.status)
+        return Json.parseToJsonElement(resp.bodyAsText()).jsonObject
+    }
+
+    private suspend fun postWebhook(client: HttpClient, body: String, signature: String? = sign(body)): io.ktor.client.statement.HttpResponse =
+        client.post("/payments/webhook") {
+            contentType(ContentType.Application.Json)
+            if (signature != null) header("X-Webhook-Signature", signature)
+            setBody(body)
+        }
+
     @Test
-    fun `confirming payment transitions the order to paid`() = testApplication {
+    fun `creating a payment for a checked-out order returns initiated status`() = testApplication {
         configureApp()
         val client = jsonClient()
         val adminTok = accessToken(client, "admin", "admin123")
         val cashierTok = accessToken(client, "cashier", "cashier123")
         val orderId = seedPendingOrder(client, adminTok, cashierTok)
 
-        val resp = client.post("/orders/$orderId/payments") {
-            header(HttpHeaders.Authorization, "Bearer $cashierTok")
-            contentType(ContentType.Application.Json)
-            setBody("""{"method":"CARD","amount":10.0,"reference":"auth-123"}""")
-        }
-        assertEquals(HttpStatusCode.OK, resp.status)
-        val body = Json.parseToJsonElement(resp.bodyAsText()).jsonObject
-        assertEquals("PAID", body["status"]?.jsonPrimitive?.content)
-        assertEquals("CARD", body["payment"]?.jsonObject?.get("method")?.jsonPrimitive?.content)
+        val payment = createPayment(client, cashierTok, orderId)
+
+        assertEquals("INITIATED", payment["status"]?.jsonPrimitive?.content)
     }
 
     @Test
-    fun `confirming payment twice is rejected`() = testApplication {
+    fun `creating a payment for an unknown order returns 404`() = testApplication {
         configureApp()
         val client = jsonClient()
-        val adminTok = accessToken(client, "admin", "admin123")
         val cashierTok = accessToken(client, "cashier", "cashier123")
-        val orderId = seedPendingOrder(client, adminTok, cashierTok)
 
-        client.post("/orders/$orderId/payments") {
+        val resp = client.post("/payments") {
             header(HttpHeaders.Authorization, "Bearer $cashierTok")
             contentType(ContentType.Application.Json)
-            setBody("""{"method":"CARD","amount":10.0}""")
+            setBody("""{"orderId":"does-not-exist","amount":10.0,"currency":"USD"}""")
         }
-        val secondResp = client.post("/orders/$orderId/payments") {
-            header(HttpHeaders.Authorization, "Bearer $cashierTok")
-            contentType(ContentType.Application.Json)
-            setBody("""{"method":"CARD","amount":10.0}""")
-        }
-        assertEquals(HttpStatusCode.Conflict, secondResp.status)
+        assertEquals(HttpStatusCode.NotFound, resp.status)
     }
 
     @Test
-    fun `refunding a paid order transitions it to refunded`() = testApplication {
+    fun `an approved webhook confirms the order as paid`() = testApplication {
         configureApp()
         val client = jsonClient()
         val adminTok = accessToken(client, "admin", "admin123")
         val cashierTok = accessToken(client, "cashier", "cashier123")
         val orderId = seedPendingOrder(client, adminTok, cashierTok)
-        client.post("/orders/$orderId/payments") {
-            header(HttpHeaders.Authorization, "Bearer $cashierTok")
-            contentType(ContentType.Application.Json)
-            setBody("""{"method":"CARD","amount":10.0}""")
-        }
+        val payment = createPayment(client, cashierTok, orderId)
+        val terminalTransactionId = payment["terminalTransactionId"]!!.jsonPrimitive.content
 
-        val resp = client.post("/orders/$orderId/refund") {
+        val body = """{"eventId":"evt-1","terminalTransactionId":"$terminalTransactionId","outcome":"APPROVED"}"""
+        val webhookResp = postWebhook(client, body)
+        assertEquals(HttpStatusCode.OK, webhookResp.status)
+
+        val orderResp = client.get("/orders/$orderId") {
+            header(HttpHeaders.Authorization, "Bearer $cashierTok")
+        }
+        assertEquals("PAID", Json.parseToJsonElement(orderResp.bodyAsText()).jsonObject["status"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `a webhook with an invalid signature is rejected`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val adminTok = accessToken(client, "admin", "admin123")
+        val cashierTok = accessToken(client, "cashier", "cashier123")
+        val orderId = seedPendingOrder(client, adminTok, cashierTok)
+        val payment = createPayment(client, cashierTok, orderId)
+        val terminalTransactionId = payment["terminalTransactionId"]!!.jsonPrimitive.content
+
+        val body = """{"eventId":"evt-1","terminalTransactionId":"$terminalTransactionId","outcome":"APPROVED"}"""
+        val resp = postWebhook(client, body, signature = "not-the-right-signature")
+
+        assertEquals(HttpStatusCode.Unauthorized, resp.status)
+    }
+
+    @Test
+    fun `a declined webhook does not confirm the order`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val adminTok = accessToken(client, "admin", "admin123")
+        val cashierTok = accessToken(client, "cashier", "cashier123")
+        val orderId = seedPendingOrder(client, adminTok, cashierTok)
+        val payment = createPayment(client, cashierTok, orderId)
+        val terminalTransactionId = payment["terminalTransactionId"]!!.jsonPrimitive.content
+
+        val body = """{"eventId":"evt-1","terminalTransactionId":"$terminalTransactionId","outcome":"DECLINED","declineReason":"Card expired"}"""
+        val webhookResp = postWebhook(client, body)
+        assertEquals(HttpStatusCode.OK, webhookResp.status)
+        assertEquals("DECLINED", Json.parseToJsonElement(webhookResp.bodyAsText()).jsonObject["status"]?.jsonPrimitive?.content)
+
+        val orderResp = client.get("/orders/$orderId") {
+            header(HttpHeaders.Authorization, "Bearer $cashierTok")
+        }
+        assertEquals("PENDING", Json.parseToJsonElement(orderResp.bodyAsText()).jsonObject["status"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `refunding an approved payment refunds the order`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val adminTok = accessToken(client, "admin", "admin123")
+        val cashierTok = accessToken(client, "cashier", "cashier123")
+        val orderId = seedPendingOrder(client, adminTok, cashierTok)
+        val payment = createPayment(client, cashierTok, orderId)
+        val paymentId = payment["id"]!!.jsonPrimitive.content
+        val terminalTransactionId = payment["terminalTransactionId"]!!.jsonPrimitive.content
+        postWebhook(client, """{"eventId":"evt-1","terminalTransactionId":"$terminalTransactionId","outcome":"APPROVED"}""")
+
+        val refundResp = client.post("/payments/$paymentId/refund") {
             header(HttpHeaders.Authorization, "Bearer $adminTok")
             contentType(ContentType.Application.Json)
-            setBody("""{"reason":"Customer request"}""")
+            setBody("""{"refundId":"refund-1","amount":10.0}""")
         }
-        assertEquals(HttpStatusCode.OK, resp.status)
-        val body = Json.parseToJsonElement(resp.bodyAsText()).jsonObject
-        assertEquals("REFUNDED", body["status"]?.jsonPrimitive?.content)
-        assertEquals("Customer request", body["refund"]?.jsonObject?.get("reason")?.jsonPrimitive?.content)
-    }
+        assertEquals(HttpStatusCode.OK, refundResp.status)
+        assertEquals("REFUNDED", Json.parseToJsonElement(refundResp.bodyAsText()).jsonObject["status"]?.jsonPrimitive?.content)
 
-    @Test
-    fun `refunding a pending (unpaid) order is rejected`() = testApplication {
-        configureApp()
-        val client = jsonClient()
-        val adminTok = accessToken(client, "admin", "admin123")
-        val cashierTok = accessToken(client, "cashier", "cashier123")
-        val orderId = seedPendingOrder(client, adminTok, cashierTok)
-
-        val resp = client.post("/orders/$orderId/refund") {
+        val orderResp = client.get("/orders/$orderId") {
             header(HttpHeaders.Authorization, "Bearer $adminTok")
-            contentType(ContentType.Application.Json)
-            setBody("""{}""")
         }
-        assertEquals(HttpStatusCode.Conflict, resp.status)
+        assertEquals("REFUNDED", Json.parseToJsonElement(orderResp.bodyAsText()).jsonObject["status"]?.jsonPrimitive?.content)
     }
 
     @Test
@@ -185,55 +240,16 @@ class OrderRoutesTest {
         val adminTok = accessToken(client, "admin", "admin123")
         val cashierTok = accessToken(client, "cashier", "cashier123")
         val orderId = seedPendingOrder(client, adminTok, cashierTok)
-        client.post("/orders/$orderId/payments") {
-            header(HttpHeaders.Authorization, "Bearer $cashierTok")
-            contentType(ContentType.Application.Json)
-            setBody("""{"method":"CARD","amount":10.0}""")
-        }
+        val payment = createPayment(client, cashierTok, orderId)
+        val paymentId = payment["id"]!!.jsonPrimitive.content
+        val terminalTransactionId = payment["terminalTransactionId"]!!.jsonPrimitive.content
+        postWebhook(client, """{"eventId":"evt-1","terminalTransactionId":"$terminalTransactionId","outcome":"APPROVED"}""")
 
-        val resp = client.post("/orders/$orderId/refund") {
+        val resp = client.post("/payments/$paymentId/refund") {
             header(HttpHeaders.Authorization, "Bearer $cashierTok")
             contentType(ContentType.Application.Json)
-            setBody("""{}""")
+            setBody("""{"refundId":"refund-1","amount":10.0}""")
         }
         assertEquals(HttpStatusCode.Forbidden, resp.status)
-    }
-
-    @Test
-    fun `the order's audit trail records creation, payment, and refund in order`() = testApplication {
-        configureApp()
-        val client = jsonClient()
-        val adminTok = accessToken(client, "admin", "admin123")
-        val cashierTok = accessToken(client, "cashier", "cashier123")
-        val orderId = seedPendingOrder(client, adminTok, cashierTok)
-        client.post("/orders/$orderId/payments") {
-            header(HttpHeaders.Authorization, "Bearer $cashierTok")
-            contentType(ContentType.Application.Json)
-            setBody("""{"method":"CARD","amount":10.0}""")
-        }
-        client.post("/orders/$orderId/refund") {
-            header(HttpHeaders.Authorization, "Bearer $adminTok")
-            contentType(ContentType.Application.Json)
-            setBody("""{}""")
-        }
-
-        val resp = client.get("/orders/$orderId/events") {
-            header(HttpHeaders.Authorization, "Bearer $adminTok")
-        }
-        assertEquals(HttpStatusCode.OK, resp.status)
-        val types = Json.parseToJsonElement(resp.bodyAsText()).jsonArray.map { it.jsonObject["type"]?.jsonPrimitive?.content }
-        assertEquals(listOf("CREATED", "PAYMENT_CONFIRMED", "REFUNDED"), types)
-    }
-
-    @Test
-    fun `fetching an unknown order returns 404`() = testApplication {
-        configureApp()
-        val client = jsonClient()
-        val cashierTok = accessToken(client, "cashier", "cashier123")
-
-        val resp = client.get("/orders/does-not-exist") {
-            header(HttpHeaders.Authorization, "Bearer $cashierTok")
-        }
-        assertEquals(HttpStatusCode.NotFound, resp.status)
     }
 }

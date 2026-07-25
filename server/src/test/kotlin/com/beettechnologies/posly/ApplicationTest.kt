@@ -17,7 +17,8 @@ class ApplicationTest {
                 "jwt.audience" to "posly-api",
                 "jwt.accessTokenExpirationMs" to "900000",
                 "jwt.refreshTokenExpirationMs" to "604800000",
-                "jwt.mfaTokenExpirationMs" to "300000"
+                "jwt.mfaTokenExpirationMs" to "300000",
+                "payments.webhookSecret" to "test-webhook-secret"
             )
         }
         application { module() }
