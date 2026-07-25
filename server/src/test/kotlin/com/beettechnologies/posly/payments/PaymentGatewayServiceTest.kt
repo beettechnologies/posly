@@ -6,6 +6,8 @@ import com.beettechnologies.posly.cart.CartTotals
 import com.beettechnologies.posly.cart.Order
 import com.beettechnologies.posly.cart.OrderService
 import com.beettechnologies.posly.cart.OrderStatus
+import com.beettechnologies.posly.gateway.GatewayException
+import com.beettechnologies.posly.gateway.RetryPolicy
 import com.beettechnologies.posly.products.TaxCategory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers

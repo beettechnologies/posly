@@ -13,12 +13,19 @@ import com.beettechnologies.posly.cart.configureCartRoutes
 import com.beettechnologies.posly.cart.configureOrderRoutes
 import com.beettechnologies.posly.devices.DeviceRegistryService
 import com.beettechnologies.posly.devices.configureDeviceRoutes
+import com.beettechnologies.posly.email.EmailService
+import com.beettechnologies.posly.email.SimulatorEmailGateway
+import com.beettechnologies.posly.email.configureEmailRoutes
 import com.beettechnologies.posly.inventory.InventoryService
 import com.beettechnologies.posly.inventory.configureInventoryRoutes
 import com.beettechnologies.posly.observability.configureObservability
 import com.beettechnologies.posly.payments.PaymentGatewayService
 import com.beettechnologies.posly.payments.SimulatorPaymentGateway
 import com.beettechnologies.posly.payments.configurePaymentRoutes
+import com.beettechnologies.posly.printing.PrintService
+import com.beettechnologies.posly.printing.PrinterRegistryService
+import com.beettechnologies.posly.printing.SimulatorPrintGateway
+import com.beettechnologies.posly.printing.configurePrintRoutes
 import com.beettechnologies.posly.products.ProductService
 import com.beettechnologies.posly.products.configureProductRoutes
 import com.beettechnologies.posly.products.search.configureSearchRoutes
@@ -71,6 +78,9 @@ fun Application.module() {
         autoResolveScope = this
     )
     val offlineSyncService = OfflineSyncService(deviceRegistryService, productService, cartService, orderService)
+    val printerRegistryService = PrinterRegistryService()
+    val printService = PrintService(orderService, printerRegistryService, SimulatorPrintGateway())
+    val emailService = EmailService(orderService, SimulatorEmailGateway())
 
     configureObservability()
 
@@ -124,4 +134,6 @@ fun Application.module() {
     configureOrderRoutes(orderService)
     configurePaymentRoutes(paymentGatewayService)
     configureSyncRoutes(offlineSyncService)
+    configurePrintRoutes(printerRegistryService, printService)
+    configureEmailRoutes(emailService)
 }

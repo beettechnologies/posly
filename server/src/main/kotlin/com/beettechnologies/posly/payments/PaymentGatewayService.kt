@@ -2,6 +2,8 @@ package com.beettechnologies.posly.payments
 
 import com.beettechnologies.posly.cart.OrderService
 import com.beettechnologies.posly.cart.OrderStatus
+import com.beettechnologies.posly.gateway.GatewayException
+import com.beettechnologies.posly.gateway.RetryPolicy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch

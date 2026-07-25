@@ -30,6 +30,7 @@ dependencies {
     implementation(libs.logstash.logback.encoder)
     implementation(libs.lucene.core)
     implementation(libs.lucene.analysis.common)
+    implementation(libs.pdfbox)
     testImplementation(libs.ktor.serverTestHost)
     testImplementation(libs.ktor.clientContentNegotiation)
     testImplementation(libs.kotlin.testJunit)

@@ -10,6 +10,7 @@ import com.beettechnologies.posly.devices.devicesModule
 import com.beettechnologies.posly.orders.ordersModule
 import com.beettechnologies.posly.payments.paymentsModule
 import com.beettechnologies.posly.products.productsModule
+import com.beettechnologies.posly.receipts.receiptsModule
 import com.beettechnologies.posly.stores.storesModule
 import org.koin.core.context.startKoin
 
@@ -24,7 +25,8 @@ fun main() {
             productsModule,
             cartModule,
             ordersModule,
-            paymentsModule
+            paymentsModule,
+            receiptsModule
         )
     }
 

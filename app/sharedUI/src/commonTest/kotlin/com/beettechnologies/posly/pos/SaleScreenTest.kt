@@ -21,6 +21,7 @@ import com.beettechnologies.posly.cart.GetCartOutcome
 import com.beettechnologies.posly.cart.RemoveCartItemOutcome
 import com.beettechnologies.posly.cart.SelectedModifierRequest
 import com.beettechnologies.posly.cart.SetCartDiscountOutcome
+import com.beettechnologies.posly.cart.TaxBreakdownLineResponse
 import com.beettechnologies.posly.cart.UpdateCartItemQuantityOutcome
 import com.beettechnologies.posly.devices.DeviceCredentials
 import com.beettechnologies.posly.devices.DeviceCredentialsStore
@@ -55,13 +56,13 @@ private fun screenCartItem(id: String, name: String, quantity: Int, unitPrice: D
     lineTotal = unitPrice * quantity
 )
 
-private fun screenCart(items: List<CartItemResponse>, discount: DiscountDto? = null) = CartResponse(
+private fun screenCart(items: List<CartItemResponse>, discount: DiscountDto? = null, totals: CartTotalsResponse = emptyTotals()) = CartResponse(
     id = "cart-1",
     storeId = "store-1",
     status = "OPEN",
     items = items,
     discount = discount,
-    totals = emptyTotals(),
+    totals = totals,
     createdAt = "2026-01-01T00:00:00Z",
     updatedAt = "2026-01-01T00:00:00Z"
 )
@@ -274,5 +275,43 @@ class SaleScreenTest {
         waitForIdle()
 
         onNodeWithTag(SaleScreenTags.CLEAR_DISCOUNT_BUTTON).assertDoesNotExist()
+    }
+
+    @Test
+    fun `each backend tax breakdown line is displayed verbatim, in order, alongside the total`() = runComposeUiTest {
+        val totals = CartTotalsResponse(
+            subtotal = 200.0, itemDiscountTotal = 0.0, cartDiscountAmount = 0.0, taxableAmount = 200.0,
+            taxBreakdown = listOf(
+                TaxBreakdownLineResponse("GST", 5.0, 10.0),
+                TaxBreakdownLineResponse("PST", 7.0, 14.7)
+            ),
+            totalTax = 24.7, total = 224.7
+        )
+        val cart = screenCart(items = listOf(screenCartItem(id = "item-1", name = "Widget", quantity = 1)), totals = totals)
+        val viewModel = viewModelWith(cart)
+
+        setContent { SaleScreen(onBack = {}, viewModel = viewModel) }
+        waitForIdle()
+
+        onNodeWithTag(SaleScreenTags.TAX_LINE_PREFIX + 0).assertTextEquals("GST (5.0%): \$10.0")
+        onNodeWithTag(SaleScreenTags.TAX_LINE_PREFIX + 1).assertTextEquals("PST (7.0%): \$14.7")
+        onNodeWithTag(SaleScreenTags.TAX_TOTAL_TEXT).assertTextEquals("Tax: \$24.7")
+        onNodeWithTag(SaleScreenTags.TOTAL_TEXT).assertTextEquals("Total: \$224.7")
+    }
+
+    @Test
+    fun `an all-exempt cart shows no breakdown lines and zero tax`() = runComposeUiTest {
+        val totals = CartTotalsResponse(
+            subtotal = 50.0, itemDiscountTotal = 0.0, cartDiscountAmount = 0.0, taxableAmount = 0.0,
+            taxBreakdown = emptyList(), totalTax = 0.0, total = 50.0
+        )
+        val cart = screenCart(items = listOf(screenCartItem(id = "item-1", name = "Widget", quantity = 1)), totals = totals)
+        val viewModel = viewModelWith(cart)
+
+        setContent { SaleScreen(onBack = {}, viewModel = viewModel) }
+        waitForIdle()
+
+        onNodeWithTag(SaleScreenTags.TAX_LINE_PREFIX + 0).assertDoesNotExist()
+        onNodeWithTag(SaleScreenTags.TAX_TOTAL_TEXT).assertTextEquals("Tax: \$0.0")
     }
 }

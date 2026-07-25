@@ -1,13 +1,8 @@
 package com.beettechnologies.posly.payments
 
+import com.beettechnologies.posly.gateway.GatewayTransientException
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
-
-/** A gateway-side failure. Non-transient by default - retrying would not help. */
-open class GatewayException(message: String) : Exception(message)
-
-/** A transient gateway failure (e.g. a network blip) - safe and expected to retry. */
-class GatewayTransientException(message: String) : GatewayException(message)
 
 /**
  * Abstracts terminal/gateway differences behind one contract so the rest of the payment

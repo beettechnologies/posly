@@ -61,6 +61,8 @@ object SaleScreenTags {
     const val QUICK_DISCOUNT_PREFIX = "sale_quick_discount_"
     const val CLEAR_DISCOUNT_BUTTON = "sale_clear_discount_button"
     const val DISCOUNT_TEXT = "sale_discount_text"
+    const val TAX_LINE_PREFIX = "sale_tax_line_"
+    const val TAX_TOTAL_TEXT = "sale_tax_total_text"
     const val CHARGE_BUTTON = "sale_charge_button"
 }
 
@@ -254,7 +256,16 @@ fun SaleScreen(
                             modifier = Modifier.testTag(SaleScreenTags.DISCOUNT_TEXT)
                         )
                     }
-                    Text("Tax: $${totals?.totalTax ?: 0.0}")
+                    totals?.taxBreakdown?.forEachIndexed { index, line ->
+                        Text(
+                            "${line.name} (${line.ratePercent}%): $${line.amount}",
+                            modifier = Modifier.testTag(SaleScreenTags.TAX_LINE_PREFIX + index)
+                        )
+                    }
+                    Text(
+                        "Tax: $${totals?.totalTax ?: 0.0}",
+                        modifier = Modifier.testTag(SaleScreenTags.TAX_TOTAL_TEXT)
+                    )
                     Text(
                         "Total: $${totals?.total ?: 0.0}",
                         style = MaterialTheme.typography.titleMedium,
