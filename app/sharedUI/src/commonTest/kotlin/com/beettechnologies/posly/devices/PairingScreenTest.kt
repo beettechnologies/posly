@@ -37,6 +37,9 @@ private class FakeDeviceApi(
         lastEnrollRequest = request
         return enrollResult
     }
+
+    override suspend fun listDevices(storeId: String?): ListDevicesOutcome = error("not used in these tests")
+    override suspend fun deprovisionDevice(id: String): DeprovisionDeviceOutcome = error("not used in these tests")
 }
 
 private class InMemoryDeviceCredentialsStore : DeviceCredentialsStore {

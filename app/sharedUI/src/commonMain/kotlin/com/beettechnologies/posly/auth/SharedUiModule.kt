@@ -4,6 +4,7 @@ import com.beettechnologies.posly.admin.StoreFormViewModel
 import com.beettechnologies.posly.admin.StoreListViewModel
 import com.beettechnologies.posly.admin.TaxProfileFormViewModel
 import com.beettechnologies.posly.admin.TaxProfileListViewModel
+import com.beettechnologies.posly.devices.DeviceListViewModel
 import com.beettechnologies.posly.devices.DevicePairingAdminViewModel
 import com.beettechnologies.posly.devices.PairingViewModel
 import org.koin.core.module.Module
@@ -19,4 +20,5 @@ val sharedUiModule: Module = module {
     viewModel { TaxProfileFormViewModel(get()) }
     viewModel { PairingViewModel(get(), get()) }
     viewModel { DevicePairingAdminViewModel(get(), get()) }
+    viewModel { DeviceListViewModel(get(), get()) }
 }

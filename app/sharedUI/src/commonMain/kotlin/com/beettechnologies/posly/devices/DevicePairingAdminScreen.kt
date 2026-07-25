@@ -15,6 +15,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -31,6 +32,7 @@ import org.koin.compose.viewmodel.koinViewModel
 
 object DevicePairingAdminScreenTags {
     const val STORE_BUTTON = "device_pairing_store_button"
+    const val TERMINAL_TYPE_FIELD = "device_pairing_terminal_type_field"
     const val GENERATE_BUTTON = "device_pairing_generate_button"
     const val ERROR_TEXT = "device_pairing_error_text"
     const val CODE_TEXT = "device_pairing_code_text"
@@ -80,6 +82,14 @@ fun DevicePairingAdminScreen(
                 }
             }
         }
+
+        OutlinedTextField(
+            value = uiState.terminalType,
+            onValueChange = viewModel::onTerminalTypeChange,
+            label = { Text("Terminal type (optional)") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().padding(top = 12.dp).testTag(DevicePairingAdminScreenTags.TERMINAL_TYPE_FIELD)
+        )
 
         if (uiState.errorMessage != null) {
             Text(

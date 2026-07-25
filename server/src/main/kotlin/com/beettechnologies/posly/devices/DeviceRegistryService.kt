@@ -2,6 +2,7 @@ package com.beettechnologies.posly.devices
 
 import com.beettechnologies.posly.audit.AuditEvent
 import com.beettechnologies.posly.audit.AuditService
+import java.security.MessageDigest
 import java.security.SecureRandom
 import java.time.Instant
 import java.util.UUID
@@ -12,12 +13,16 @@ private const val PAIRING_CODE_LENGTH = 8
 private const val CLIENT_SECRET_LENGTH = 32
 private const val MAX_CREATE_ATTEMPTS = 10
 
+/** A device with no heartbeat received in this long is considered offline. */
+const val HEARTBEAT_OFFLINE_THRESHOLD_SECONDS = 300L
+
 private const val PAIRING_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 private const val CREDENTIAL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
 
 data class PairingCode(
     val code: String,
     val storeId: String,
+    val terminalType: String?,
     val createdBy: String,
     val createdAt: Instant,
     val expiresAt: Instant,
@@ -26,14 +31,28 @@ data class PairingCode(
     val deviceId: String? = null
 )
 
+enum class DeviceStatus { ACTIVE, DEPROVISIONED }
+
+enum class DeviceHealthStatus { ONLINE, OFFLINE, NEVER_SEEN }
+
 data class DeviceRecord(
     val id: String,
     val storeId: String,
     val name: String,
+    val terminalType: String?,
     val enrolledAt: Instant,
     val clientId: String,
-    val clientSecret: String
-)
+    val clientSecret: String,
+    val status: DeviceStatus = DeviceStatus.ACTIVE,
+    val lastSeenAt: Instant? = null,
+    val deprovisionedAt: Instant? = null
+) {
+    fun healthStatus(now: Instant): DeviceHealthStatus = when {
+        lastSeenAt == null -> DeviceHealthStatus.NEVER_SEEN
+        lastSeenAt.isBefore(now.minusSeconds(HEARTBEAT_OFFLINE_THRESHOLD_SECONDS)) -> DeviceHealthStatus.OFFLINE
+        else -> DeviceHealthStatus.ONLINE
+    }
+}
 
 data class DeviceAuditRecord(
     val timestamp: Instant,
@@ -50,7 +69,8 @@ enum class DeviceAuditEvent {
     PAIR_CODE_VALIDATED,
     PAIR_CODE_REVOKED,
     DEVICE_ENROLLED,
-    ENROLLMENT_REJECTED
+    ENROLLMENT_REJECTED,
+    DEVICE_DEPROVISIONED
 }
 
 sealed class PairingCodeValidationResult {
@@ -77,6 +97,18 @@ sealed class EnrollDeviceResult {
     data object StoreMismatch : EnrollDeviceResult()
 }
 
+sealed class HeartbeatResult {
+    data class Success(val device: DeviceRecord) : HeartbeatResult()
+    data object InvalidCredentials : HeartbeatResult()
+    data object Deprovisioned : HeartbeatResult()
+}
+
+sealed class DeprovisionResult {
+    data class Success(val device: DeviceRecord) : DeprovisionResult()
+    data object NotFound : DeprovisionResult()
+    data object AlreadyDeprovisioned : DeprovisionResult()
+}
+
 class DeviceRegistryService(
     private val nowProvider: () -> Instant = { Instant.now() },
     private val secureRandom: SecureRandom = SecureRandom()
@@ -86,7 +118,12 @@ class DeviceRegistryService(
     private val devices = ConcurrentHashMap<String, DeviceRecord>()
     private val auditTrail = mutableListOf<DeviceAuditRecord>()
 
-    fun createPairCode(storeId: String, createdBy: String, expiresInSeconds: Long? = null): PairingCode {
+    fun createPairCode(
+        storeId: String,
+        createdBy: String,
+        expiresInSeconds: Long? = null,
+        terminalType: String? = null
+    ): PairingCode {
         val now = nowProvider()
         val ttl = expiresInSeconds ?: DEFAULT_TTL_SECONDS
         val expiresAt = now.plusSeconds(ttl.coerceAtLeast(0))
@@ -96,6 +133,7 @@ class DeviceRegistryService(
             val pairingCode = PairingCode(
                 code = code,
                 storeId = storeId,
+                terminalType = terminalType?.takeIf { it.isNotBlank() },
                 createdBy = createdBy,
                 createdAt = now,
                 expiresAt = expiresAt
@@ -182,6 +220,7 @@ class DeviceRegistryService(
                 id = deviceId,
                 storeId = pairingCode.storeId,
                 name = name?.takeIf { it.isNotBlank() } ?: "Store device",
+                terminalType = pairingCode.terminalType,
                 enrolledAt = now,
                 clientId = "dev_${randomToken(16, CREDENTIAL_ALPHABET)}",
                 clientSecret = randomToken(CLIENT_SECRET_LENGTH, CREDENTIAL_ALPHABET)
@@ -201,6 +240,48 @@ class DeviceRegistryService(
                 detail = "deviceId=$deviceId storeId=${pairingCode.storeId}"
             )
             return EnrollDeviceResult.Success(device)
+        }
+    }
+
+    fun listDevices(storeId: String? = null): List<DeviceRecord> =
+        devices.values
+            .filter { storeId == null || it.storeId == storeId }
+            .sortedBy { it.enrolledAt }
+
+    fun getDevice(id: String): DeviceRecord? = devices[id]
+
+    fun recordHeartbeat(clientId: String, clientSecret: String): HeartbeatResult {
+        synchronized(lock) {
+            val device = devices.values.firstOrNull { it.clientId == clientId }
+                ?: return HeartbeatResult.InvalidCredentials
+            if (!MessageDigest.isEqual(device.clientSecret.toByteArray(), clientSecret.toByteArray())) {
+                return HeartbeatResult.InvalidCredentials
+            }
+            if (device.status == DeviceStatus.DEPROVISIONED) {
+                return HeartbeatResult.Deprovisioned
+            }
+
+            val updated = device.copy(lastSeenAt = nowProvider())
+            devices[device.id] = updated
+            return HeartbeatResult.Success(updated)
+        }
+    }
+
+    fun deprovisionDevice(id: String, actorId: String): DeprovisionResult {
+        synchronized(lock) {
+            val device = devices[id] ?: return DeprovisionResult.NotFound
+            if (device.status == DeviceStatus.DEPROVISIONED) return DeprovisionResult.AlreadyDeprovisioned
+
+            val updated = device.copy(status = DeviceStatus.DEPROVISIONED, deprovisionedAt = nowProvider())
+            devices[id] = updated
+            recordAudit(
+                DeviceAuditEvent.DEVICE_DEPROVISIONED,
+                deviceId = id,
+                storeId = device.storeId,
+                actorId = actorId
+            )
+            AuditService.record(AuditEvent.DEVICE_DEPROVISIONED, detail = "deviceId=$id storeId=${device.storeId}")
+            return DeprovisionResult.Success(updated)
         }
     }
 

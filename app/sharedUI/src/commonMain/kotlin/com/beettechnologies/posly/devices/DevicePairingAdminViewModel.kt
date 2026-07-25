@@ -13,6 +13,7 @@ import kotlinx.coroutines.launch
 data class DevicePairingAdminUiState(
     val stores: List<StoreResponse> = emptyList(),
     val selectedStoreId: String? = null,
+    val terminalType: String = "",
     val isGenerating: Boolean = false,
     val errorMessage: String? = null,
     val pairCode: PairCodeResponse? = null
@@ -42,11 +43,20 @@ class DevicePairingAdminViewModel(
         _uiState.value = _uiState.value.copy(selectedStoreId = storeId, pairCode = null, errorMessage = null)
     }
 
+    fun onTerminalTypeChange(value: String) {
+        _uiState.value = _uiState.value.copy(terminalType = value)
+    }
+
     fun generateCode() {
-        val storeId = _uiState.value.selectedStoreId ?: return
+        val state = _uiState.value
+        val storeId = state.selectedStoreId ?: return
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isGenerating = true, errorMessage = null, pairCode = null)
-            when (val outcome = deviceApi.createPairCode(CreatePairCodeRequest(storeId = storeId))) {
+            _uiState.value = state.copy(isGenerating = true, errorMessage = null, pairCode = null)
+            val request = CreatePairCodeRequest(
+                storeId = storeId,
+                terminalType = state.terminalType.trim().takeIf { it.isNotBlank() }
+            )
+            when (val outcome = deviceApi.createPairCode(request)) {
                 is CreatePairCodeOutcome.Success -> _uiState.value =
                     _uiState.value.copy(isGenerating = false, pairCode = outcome.response)
                 is CreatePairCodeOutcome.Rejected -> _uiState.value =

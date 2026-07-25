@@ -10,9 +10,23 @@ import io.ktor.server.application.call
 import io.ktor.server.auth.authenticate
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
+import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
+import java.time.Instant
+
+private fun DeviceRecord.toResponse(now: Instant) = DeviceResponse(
+    id = id,
+    storeId = storeId,
+    name = name,
+    terminalType = terminalType,
+    enrolledAt = enrolledAt.toString(),
+    status = status.name,
+    healthStatus = healthStatus(now).name,
+    lastSeenAt = lastSeenAt?.toString(),
+    deprovisionedAt = deprovisionedAt?.toString()
+)
 
 fun Application.configureDeviceRoutes(deviceRegistryService: DeviceRegistryService) {
     routing {
@@ -32,14 +46,16 @@ fun Application.configureDeviceRoutes(deviceRegistryService: DeviceRegistryServi
                         val pairingCode = deviceRegistryService.createPairCode(
                             storeId = request.storeId,
                             createdBy = claims?.userId ?: "unknown",
-                            expiresInSeconds = request.expiresInSeconds
+                            expiresInSeconds = request.expiresInSeconds,
+                            terminalType = request.terminalType
                         )
                         call.respond(
                             HttpStatusCode.Created,
                             PairCodeResponse(
                                 code = pairingCode.code,
                                 storeId = pairingCode.storeId,
-                                expiresAt = pairingCode.expiresAt.toString()
+                                expiresAt = pairingCode.expiresAt.toString(),
+                                terminalType = pairingCode.terminalType
                             )
                         )
                     }
@@ -101,7 +117,64 @@ fun Application.configureDeviceRoutes(deviceRegistryService: DeviceRegistryServi
                             )
                         }
                     }
+
+                    get {
+                        val storeId = call.request.queryParameters["storeId"]
+                        val now = Instant.now()
+                        call.respond(
+                            HttpStatusCode.OK,
+                            deviceRegistryService.listDevices(storeId).map { it.toResponse(now) }
+                        )
+                    }
+
+                    get("/{id}") {
+                        val id = call.parameters["id"]!!
+                        val device = deviceRegistryService.getDevice(id)
+                        if (device == null) {
+                            call.respond(HttpStatusCode.NotFound, ErrorResponse("Device not found"))
+                        } else {
+                            call.respond(HttpStatusCode.OK, device.toResponse(Instant.now()))
+                        }
+                    }
+
+                    post("/{id}/deprovision") {
+                        val id = call.parameters["id"]!!
+                        val claims = call.tokenClaims()
+                        when (val result = deviceRegistryService.deprovisionDevice(id, claims?.userId ?: "unknown")) {
+                            is DeprovisionResult.Success -> call.respond(HttpStatusCode.OK, result.device.toResponse(Instant.now()))
+                            DeprovisionResult.NotFound -> call.respond(
+                                HttpStatusCode.NotFound,
+                                ErrorResponse("Device not found")
+                            )
+                            DeprovisionResult.AlreadyDeprovisioned -> call.respond(
+                                HttpStatusCode.BadRequest,
+                                ErrorResponse("Device is already deprovisioned")
+                            )
+                        }
+                    }
                 }
+            }
+        }
+
+        post("/devices/heartbeat") {
+            val request = runCatching { call.receive<HeartbeatRequest>() }.getOrElse {
+                call.respond(HttpStatusCode.BadRequest, ErrorResponse("Invalid request body"))
+                return@post
+            }
+
+            when (val result = deviceRegistryService.recordHeartbeat(request.clientId, request.clientSecret)) {
+                is HeartbeatResult.Success -> call.respond(
+                    HttpStatusCode.OK,
+                    HeartbeatResponse(status = result.device.status.name, lastSeenAt = result.device.lastSeenAt.toString())
+                )
+                HeartbeatResult.InvalidCredentials -> call.respond(
+                    HttpStatusCode.Unauthorized,
+                    ErrorResponse("Invalid device credentials")
+                )
+                HeartbeatResult.Deprovisioned -> call.respond(
+                    HttpStatusCode.Forbidden,
+                    ErrorResponse("Device has been deprovisioned")
+                )
             }
         }
 
