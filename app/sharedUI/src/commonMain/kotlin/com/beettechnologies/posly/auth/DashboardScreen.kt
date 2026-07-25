@@ -25,6 +25,7 @@ import org.koin.compose.koinInject
 fun DashboardScreen(
     onManageStores: () -> Unit,
     onManageTaxProfiles: () -> Unit,
+    onPairDevice: () -> Unit,
     authRepository: AuthRepository = koinInject()
 ) {
     val scope = rememberCoroutineScope()
@@ -44,8 +45,11 @@ fun DashboardScreen(
         Button(onClick = onManageStores, modifier = Modifier.padding(bottom = 12.dp)) {
             Text("Manage Stores")
         }
-        Button(onClick = onManageTaxProfiles, modifier = Modifier.padding(bottom = 24.dp)) {
+        Button(onClick = onManageTaxProfiles, modifier = Modifier.padding(bottom = 12.dp)) {
             Text("Manage Tax Profiles")
+        }
+        Button(onClick = onPairDevice, modifier = Modifier.padding(bottom = 24.dp)) {
+            Text("Pair a Device")
         }
         Button(onClick = { scope.launch { authRepository.logout() } }) {
             Text("Log out")

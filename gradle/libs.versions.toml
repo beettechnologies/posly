@@ -5,6 +5,7 @@ android-minSdk = "24"
 android-targetSdk = "36"
 androidx-activity = "1.13.0"
 androidx-appcompat = "1.7.1"
+androidx-camera = "1.6.1"
 androidx-core = "1.19.0"
 androidx-espresso = "3.7.0"
 androidx-lifecycle = "2.11.0-beta01"
@@ -26,9 +27,11 @@ logback = "1.5.38"
 logstash-logback-encoder = "8.1"
 material3 = "1.11.0-alpha07"
 micrometer = "1.13.4"
+mlkit-barcodeScanning = "17.3.0"
 multiplatform-settings = "1.3.0"
 opentelemetry-instrumentation = "2.18.1-alpha"
 opentelemetry-sdk = "1.52.0"
+zxing = "3.5.4"
 
 [libraries]
 kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
@@ -86,6 +89,12 @@ ktor-clientAuth = { module = "io.ktor:ktor-client-auth", version.ref = "ktor" }
 ktor-clientCio = { module = "io.ktor:ktor-client-cio", version.ref = "ktor" }
 ktor-clientContentNegotiationMultiplatform = { module = "io.ktor:ktor-client-content-negotiation", version.ref = "ktor" }
 ktor-serializationKotlinxJsonMultiplatform = { module = "io.ktor:ktor-serialization-kotlinx-json", version.ref = "ktor" }
+zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
+androidx-camera-core = { module = "androidx.camera:camera-core", version.ref = "androidx-camera" }
+androidx-camera-camera2 = { module = "androidx.camera:camera-camera2", version.ref = "androidx-camera" }
+androidx-camera-lifecycle = { module = "androidx.camera:camera-lifecycle", version.ref = "androidx-camera" }
+androidx-camera-view = { module = "androidx.camera:camera-view", version.ref = "androidx-camera" }
+mlkit-barcodeScanning = { module = "com.google.mlkit:barcode-scanning", version.ref = "mlkit-barcodeScanning" }
 
 [plugins]
 androidApplication = { id = "com.android.application", version.ref = "agp" }

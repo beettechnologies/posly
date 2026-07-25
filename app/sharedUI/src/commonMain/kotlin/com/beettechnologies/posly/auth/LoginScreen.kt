@@ -32,10 +32,14 @@ object LoginScreenTags {
     const val PASSWORD_FIELD = "login_password_field"
     const val SUBMIT_BUTTON = "login_submit_button"
     const val ERROR_TEXT = "login_error_text"
+    const val PAIR_DEVICE_BUTTON = "login_pair_device_button"
 }
 
 @Composable
-fun LoginScreen(viewModel: LoginViewModel = koinViewModel()) {
+fun LoginScreen(
+    onPairDevice: () -> Unit = {},
+    viewModel: LoginViewModel = koinViewModel()
+) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var passwordVisible by remember { mutableStateOf(false) }
 
@@ -97,6 +101,13 @@ fun LoginScreen(viewModel: LoginViewModel = koinViewModel()) {
             } else {
                 Text("Log in")
             }
+        }
+
+        TextButton(
+            onClick = onPairDevice,
+            modifier = Modifier.padding(top = 12.dp).testTag(LoginScreenTags.PAIR_DEVICE_BUTTON)
+        ) {
+            Text("Pair this device")
         }
     }
 }
