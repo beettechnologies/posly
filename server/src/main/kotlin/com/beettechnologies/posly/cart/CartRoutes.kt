@@ -195,17 +195,6 @@ fun Application.configureCartRoutes(cartService: CartService) {
                         }
                     }
                 }
-
-                route("/orders/{id}") {
-                    get {
-                        val order = cartService.getOrder(call.parameters["id"]!!)
-                        if (order == null) {
-                            call.respond(HttpStatusCode.NotFound, ErrorResponse("Order not found"))
-                        } else {
-                            call.respond(HttpStatusCode.OK, order.toResponse())
-                        }
-                    }
-                }
             }
         }
     }

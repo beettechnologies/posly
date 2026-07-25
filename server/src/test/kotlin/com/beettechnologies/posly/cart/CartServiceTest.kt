@@ -11,15 +11,18 @@ import com.beettechnologies.posly.stores.TaxProfileService
 import com.beettechnologies.posly.stores.TaxRate
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-private class Harness {
+private class Harness(beforeCartCommitForTesting: (() -> Unit)? = null) {
     val products = ProductService()
     val taxProfiles = TaxProfileService()
     val stores = StoreService(taxProfiles)
-    val carts = CartService(products, stores, taxProfiles)
+    val orders = OrderService()
+    val carts = CartService(products, stores, taxProfiles, orders, beforeCartCommitForTesting = beforeCartCommitForTesting)
 
     fun seedTaxProfile(ratePercent: Double = 10.0): String =
         taxProfiles.createProfile(name = "Sales Tax", rates = listOf(TaxRate("Sales Tax", ratePercent))).id
@@ -259,7 +262,51 @@ class CartServiceTest {
         assertEquals(false, first.replayed)
         assertEquals(true, second.replayed)
         assertEquals(first.order.id, second.order.id)
-        assertNotNull(h.carts.getOrder(first.order.id))
+        assertNotNull(h.orders.getOrder(first.order.id))
+    }
+
+    @Test
+    fun `checkout creates a pending order awaiting payment confirmation`() {
+        val h = Harness()
+        val storeId = h.seedStore()
+        val productId = h.seedProduct(price = 10.0)
+        val cart = (h.carts.createCart(storeId, null) as CreateCartResult.Success).cart
+        h.carts.addItem(cart.id, productId, quantity = 1)
+
+        val result = assertIs<CheckoutResult.Success>(h.carts.checkout(cart.id, "key-1"))
+
+        assertEquals(OrderStatus.PENDING, result.order.status)
+    }
+
+    @Test
+    fun `a failure between order creation and cart commit rolls back the order and a retry then succeeds`() {
+        var shouldFail = true
+        val h = Harness(
+            beforeCartCommitForTesting = {
+                if (shouldFail) {
+                    shouldFail = false
+                    throw RuntimeException("simulated crash between order creation and cart commit")
+                }
+            }
+        )
+        val storeId = h.seedStore()
+        val productId = h.seedProduct(price = 10.0)
+        val cart = (h.carts.createCart(storeId, null) as CreateCartResult.Success).cart
+        h.carts.addItem(cart.id, productId, quantity = 1)
+
+        assertFailsWith<RuntimeException> { h.carts.checkout(cart.id, "key-1") }
+
+        // No half-created order or inconsistent cart survives the failure.
+        assertEquals(0, h.orders.count())
+        val cartAfterFailure = h.carts.getCart(cart.id)!!
+        assertEquals(CartStatus.OPEN, cartAfterFailure.status)
+        assertNull(cartAfterFailure.orderId)
+
+        // Retrying (the injected fault only fires once) succeeds cleanly with exactly one order.
+        val retryResult = assertIs<CheckoutResult.Success>(h.carts.checkout(cart.id, "key-1"))
+        assertEquals(false, retryResult.replayed)
+        assertEquals(OrderStatus.PENDING, retryResult.order.status)
+        assertEquals(1, h.orders.count())
     }
 
     @Test

@@ -105,6 +105,23 @@ fun computeTotals(cart: Cart, calculateTax: (Double) -> Pair<List<TaxBreakdownLi
     )
 }
 
+enum class OrderStatus { PENDING, PAID, REFUNDED }
+
+data class PaymentRecord(
+    val method: String,
+    val amount: Double,
+    val reference: String?,
+    val confirmedBy: String?,
+    val confirmedAt: Instant
+)
+
+data class RefundRecord(
+    val amount: Double,
+    val reason: String?,
+    val refundedBy: String?,
+    val refundedAt: Instant
+)
+
 data class Order(
     val id: String = UUID.randomUUID().toString(),
     val cartId: String,
@@ -114,7 +131,20 @@ data class Order(
     val discount: Discount?,
     val totals: CartTotals,
     val idempotencyKey: String,
-    val checkedOutAt: Instant
+    val checkedOutAt: Instant,
+    val status: OrderStatus = OrderStatus.PENDING,
+    val payment: PaymentRecord? = null,
+    val refund: RefundRecord? = null
+)
+
+enum class OrderEventType { CREATED, PAYMENT_CONFIRMED, REFUNDED }
+
+data class OrderEvent(
+    val timestamp: Instant,
+    val orderId: String,
+    val type: OrderEventType,
+    val actorId: String?,
+    val detail: String? = null
 )
 
 internal fun roundCents(value: Double): Double = round(value * 100.0) / 100.0

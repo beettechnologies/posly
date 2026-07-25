@@ -71,6 +71,23 @@ data class CartResponse(
 )
 
 @Serializable
+data class PaymentRecordResponse(
+    val method: String,
+    val amount: Double,
+    val reference: String?,
+    val confirmedBy: String?,
+    val confirmedAt: String
+)
+
+@Serializable
+data class RefundRecordResponse(
+    val amount: Double,
+    val reason: String?,
+    val refundedBy: String?,
+    val refundedAt: String
+)
+
+@Serializable
 data class OrderResponse(
     val id: String,
     val cartId: String,
@@ -79,7 +96,28 @@ data class OrderResponse(
     val discount: DiscountDto?,
     val totals: CartTotalsResponse,
     val idempotencyKey: String,
-    val checkedOutAt: String
+    val checkedOutAt: String,
+    val status: String,
+    val payment: PaymentRecordResponse? = null,
+    val refund: RefundRecordResponse? = null
+)
+
+@Serializable
+data class ConfirmPaymentRequest(
+    val method: String,
+    val amount: Double,
+    val reference: String? = null
+)
+
+@Serializable
+data class RefundRequest(val reason: String? = null)
+
+@Serializable
+data class OrderEventResponse(
+    val timestamp: String,
+    val type: String,
+    val actorId: String?,
+    val detail: String? = null
 )
 
 fun Discount.toResponse() = DiscountDto(type = type.name, value = value)
@@ -120,6 +158,21 @@ fun Cart.toResponse(totals: CartTotals) = CartResponse(
     updatedAt = updatedAt.toString()
 )
 
+fun PaymentRecord.toResponse() = PaymentRecordResponse(
+    method = method,
+    amount = amount,
+    reference = reference,
+    confirmedBy = confirmedBy,
+    confirmedAt = confirmedAt.toString()
+)
+
+fun RefundRecord.toResponse() = RefundRecordResponse(
+    amount = amount,
+    reason = reason,
+    refundedBy = refundedBy,
+    refundedAt = refundedAt.toString()
+)
+
 fun Order.toResponse() = OrderResponse(
     id = id,
     cartId = cartId,
@@ -128,5 +181,15 @@ fun Order.toResponse() = OrderResponse(
     discount = discount?.toResponse(),
     totals = totals.toResponse(),
     idempotencyKey = idempotencyKey,
-    checkedOutAt = checkedOutAt.toString()
+    checkedOutAt = checkedOutAt.toString(),
+    status = status.name,
+    payment = payment?.toResponse(),
+    refund = refund?.toResponse()
+)
+
+fun OrderEvent.toResponse() = OrderEventResponse(
+    timestamp = timestamp.toString(),
+    type = type.name,
+    actorId = actorId,
+    detail = detail
 )

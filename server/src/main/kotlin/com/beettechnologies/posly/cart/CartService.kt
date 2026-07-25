@@ -47,17 +47,23 @@ sealed class CheckoutResult {
 /**
  * In-memory cart lifecycle: create -> add/remove items -> optional cart-level discount ->
  * checkout. Single-item mutations (add/remove/discount) are guarded per-cart via
- * ConcurrentHashMap.compute; checkout additionally touches the orders map so it takes a
- * dedicated lock to keep "check status, create order, flip cart to CHECKED_OUT" atomic.
+ * ConcurrentHashMap.compute; checkout additionally creates an Order via [OrderService] so it
+ * takes a dedicated lock to keep "check status, create order, flip cart to CHECKED_OUT" atomic.
+ *
+ * [beforeCartCommitForTesting], if supplied, runs immediately after the order is created and
+ * immediately before the cart is committed to CHECKED_OUT - purely a test seam for simulating a
+ * crash in that narrow window and asserting the resulting rollback leaves no orphaned order and
+ * an OPEN cart that can be retried cleanly. It is never used in production (default: no-op).
  */
 class CartService(
     private val productService: ProductService,
     private val storeService: StoreService,
     private val taxProfileService: TaxProfileService,
-    private val nowProvider: () -> Instant = { Instant.now() }
+    private val orderService: OrderService,
+    private val nowProvider: () -> Instant = { Instant.now() },
+    private val beforeCartCommitForTesting: (() -> Unit)? = null
 ) {
     private val carts = ConcurrentHashMap<String, Cart>()
-    private val orders = ConcurrentHashMap<String, Order>()
     private val checkoutLock = Any()
 
     fun createCart(storeId: String, createdBy: String?): CreateCartResult {
@@ -199,7 +205,7 @@ class CartService(
             val cart = carts[cartId] ?: return CheckoutResult.CartNotFound
 
             if (cart.status == CartStatus.CHECKED_OUT) {
-                val existingOrder = cart.orderId?.let { orders[it] }
+                val existingOrder = cart.orderId?.let { orderService.getOrder(it) }
                 return if (cart.checkoutIdempotencyKey == idempotencyKey && existingOrder != null) {
                     CheckoutResult.Success(existingOrder, replayed = true)
                 } else {
@@ -210,28 +216,22 @@ class CartService(
             if (cart.items.isEmpty()) return CheckoutResult.EmptyCart
 
             val totals = getTotals(cart)
-            val order = Order(
-                cartId = cart.id,
-                storeId = cart.storeId,
-                createdBy = cart.createdBy,
-                items = cart.items,
-                discount = cart.discount,
-                totals = totals,
-                idempotencyKey = idempotencyKey,
-                checkedOutAt = nowProvider()
-            )
-            orders[order.id] = order
-            carts[cartId] = cart.copy(
-                status = CartStatus.CHECKED_OUT,
-                checkoutIdempotencyKey = idempotencyKey,
-                orderId = order.id,
-                updatedAt = nowProvider()
-            )
+            val order = orderService.createOrder(cart, totals, idempotencyKey)
+            try {
+                beforeCartCommitForTesting?.invoke()
+                carts[cartId] = cart.copy(
+                    status = CartStatus.CHECKED_OUT,
+                    checkoutIdempotencyKey = idempotencyKey,
+                    orderId = order.id,
+                    updatedAt = nowProvider()
+                )
+            } catch (e: Exception) {
+                orderService.deleteOrder(order.id)
+                throw e
+            }
             return CheckoutResult.Success(order, replayed = false)
         }
     }
-
-    fun getOrder(id: String): Order? = orders[id]
 
     private fun validateDiscount(discount: Discount): String? = when (discount.type) {
         DiscountType.PERCENTAGE ->
