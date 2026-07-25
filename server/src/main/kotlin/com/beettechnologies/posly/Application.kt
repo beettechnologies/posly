@@ -7,6 +7,8 @@ import com.beettechnologies.posly.auth.ErrorResponse
 import com.beettechnologies.posly.auth.JwtService
 import com.beettechnologies.posly.auth.UserService
 import com.beettechnologies.posly.auth.configureAuthRoutes
+import com.beettechnologies.posly.cart.CartService
+import com.beettechnologies.posly.cart.configureCartRoutes
 import com.beettechnologies.posly.devices.DeviceRegistryService
 import com.beettechnologies.posly.devices.configureDeviceRoutes
 import com.beettechnologies.posly.inventory.InventoryService
@@ -51,6 +53,7 @@ fun Application.module() {
     val taxProfileService = TaxProfileService()
     val storeService = StoreService(taxProfileService)
     val inventoryService = InventoryService(productService, storeService)
+    val cartService = CartService(productService, storeService, taxProfileService)
 
     configureObservability()
 
@@ -99,4 +102,5 @@ fun Application.module() {
     configureStoreRoutes(storeService)
     configureTaxProfileRoutes(taxProfileService)
     configureInventoryRoutes(inventoryService)
+    configureCartRoutes(cartService)
 }
