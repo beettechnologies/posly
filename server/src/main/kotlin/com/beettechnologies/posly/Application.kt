@@ -10,6 +10,8 @@ import com.beettechnologies.posly.auth.configureAuthRoutes
 import com.beettechnologies.posly.devices.DeviceRegistryService
 import com.beettechnologies.posly.devices.configureDeviceRoutes
 import com.beettechnologies.posly.observability.configureObservability
+import com.beettechnologies.posly.products.ProductService
+import com.beettechnologies.posly.products.configureProductRoutes
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.application.*
@@ -41,6 +43,7 @@ fun Application.module() {
     val userService = UserService()
     val authService = AuthService(userService, jwtService)
     val deviceRegistryService = DeviceRegistryService()
+    val productService = ProductService()
 
     configureObservability()
 
@@ -75,7 +78,7 @@ fun Application.module() {
 
     routing {
         get("/") {
-            call.respondText(sayHello("Ktor"))
+            call.respondText("Hello, Ktor!")
         }
         get("/health") {
             call.respondText("OK")
@@ -84,4 +87,5 @@ fun Application.module() {
 
     configureAuthRoutes(authService)
     configureDeviceRoutes(deviceRegistryService)
+    configureProductRoutes(productService)
 }
