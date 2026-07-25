@@ -7,6 +7,7 @@ import com.beettechnologies.posly.admin.TaxProfileListViewModel
 import com.beettechnologies.posly.devices.DeviceListViewModel
 import com.beettechnologies.posly.devices.DevicePairingAdminViewModel
 import com.beettechnologies.posly.devices.PairingViewModel
+import com.beettechnologies.posly.pos.PaymentViewModel
 import com.beettechnologies.posly.pos.ProductDetailViewModel
 import com.beettechnologies.posly.pos.SaleViewModel
 import org.koin.core.module.Module
@@ -25,4 +26,5 @@ val sharedUiModule: Module = module {
     viewModel { DeviceListViewModel(get(), get()) }
     viewModel { SaleViewModel(get(), get(), get(), get()) }
     viewModel { ProductDetailViewModel(get(), get()) }
+    viewModel { PaymentViewModel(get(), get()) }
 }

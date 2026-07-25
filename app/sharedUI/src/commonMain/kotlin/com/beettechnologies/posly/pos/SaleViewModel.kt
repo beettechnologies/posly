@@ -6,6 +6,7 @@ import com.beettechnologies.posly.cart.AddCartItemOutcome
 import com.beettechnologies.posly.cart.CartApi
 import com.beettechnologies.posly.cart.CartResponse
 import com.beettechnologies.posly.cart.CartSessionStore
+import com.beettechnologies.posly.cart.CheckoutOutcome
 import com.beettechnologies.posly.cart.CreateCartOutcome
 import com.beettechnologies.posly.cart.DiscountDto
 import com.beettechnologies.posly.cart.GetCartOutcome
@@ -14,6 +15,7 @@ import com.beettechnologies.posly.cart.SelectedModifierRequest
 import com.beettechnologies.posly.cart.SetCartDiscountOutcome
 import com.beettechnologies.posly.cart.UpdateCartItemQuantityOutcome
 import com.beettechnologies.posly.devices.DeviceCredentialsStore
+import com.beettechnologies.posly.orders.OrderResponse
 import com.beettechnologies.posly.products.ProductSearchApi
 import com.beettechnologies.posly.products.SearchOutcome
 import com.beettechnologies.posly.products.SearchResultItem
@@ -23,6 +25,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlin.random.Random
 
 /** Enough of a voided line item to re-add it via [SaleViewModel.undoVoid] - the re-added item gets a new id. */
 data class VoidedCartItem(
@@ -42,7 +45,9 @@ data class SaleUiState(
     val selectedProductId: String? = null,
     val infoMessage: String? = null,
     val errorMessage: String? = null,
-    val lastVoidedItem: VoidedCartItem? = null
+    val lastVoidedItem: VoidedCartItem? = null,
+    val isCheckingOut: Boolean = false,
+    val checkedOutOrderId: String? = null
 )
 
 class SaleViewModel(
@@ -298,6 +303,37 @@ class SaleViewModel(
                     _uiState.value.copy(errorMessage = result.message)
             }
         }
+    }
+
+    /** Checks the cart out, creating the pending order the payment modal then opens against. */
+    fun charge() {
+        val cart = _uiState.value.cart ?: return
+        if (cart.items.isEmpty() || _uiState.value.isCheckingOut) return
+
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isCheckingOut = true, errorMessage = null)
+            val idempotencyKey = "${Random.nextLong()}-${Random.nextLong()}"
+            when (val result = cartApi.checkout(cart.id, idempotencyKey)) {
+                is CheckoutOutcome.Success -> _uiState.value =
+                    _uiState.value.copy(isCheckingOut = false, checkedOutOrderId = result.order.id)
+                CheckoutOutcome.CartNotFound -> _uiState.value =
+                    _uiState.value.copy(isCheckingOut = false, errorMessage = "Cart not found - please restart the sale")
+                is CheckoutOutcome.Rejected -> _uiState.value =
+                    _uiState.value.copy(isCheckingOut = false, errorMessage = result.message)
+                is CheckoutOutcome.NetworkError -> _uiState.value =
+                    _uiState.value.copy(isCheckingOut = false, errorMessage = result.message)
+            }
+        }
+    }
+
+    fun dismissPaymentModal() {
+        _uiState.value = _uiState.value.copy(checkedOutOrderId = null)
+    }
+
+    /** Called once the payment modal has confirmed the order as paid - starts a fresh cart for the next sale. */
+    fun onPaymentCompleted(order: OrderResponse) {
+        _uiState.value = SaleUiState(infoMessage = "Sale complete - total $${order.totals.total}")
+        viewModelScope.launch { initializeCart() }
     }
 
     /** Placeholder: there's no staff-paging backend yet - this just confirms the action to the cashier. */

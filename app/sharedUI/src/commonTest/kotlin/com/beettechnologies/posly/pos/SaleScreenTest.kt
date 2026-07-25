@@ -14,6 +14,7 @@ import com.beettechnologies.posly.cart.CartItemResponse
 import com.beettechnologies.posly.cart.CartResponse
 import com.beettechnologies.posly.cart.CartSessionStore
 import com.beettechnologies.posly.cart.CartTotalsResponse
+import com.beettechnologies.posly.cart.CheckoutOutcome
 import com.beettechnologies.posly.cart.CreateCartOutcome
 import com.beettechnologies.posly.cart.DiscountDto
 import com.beettechnologies.posly.cart.GetCartOutcome
@@ -129,6 +130,9 @@ private class FakeScreenCartApi(initialCart: CartResponse) : CartApi {
         currentCart = currentCart.copy(discount = discount)
         return SetCartDiscountOutcome.Success(currentCart)
     }
+
+    override suspend fun checkout(cartId: String, idempotencyKey: String): CheckoutOutcome =
+        error("not used in these tests")
 }
 
 @OptIn(ExperimentalTestApi::class, ExperimentalCoroutinesApi::class)

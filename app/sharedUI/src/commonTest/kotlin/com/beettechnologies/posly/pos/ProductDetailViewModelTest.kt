@@ -5,6 +5,7 @@ import com.beettechnologies.posly.cart.CartApi
 import com.beettechnologies.posly.cart.CartItemResponse
 import com.beettechnologies.posly.cart.CartResponse
 import com.beettechnologies.posly.cart.CartTotalsResponse
+import com.beettechnologies.posly.cart.CheckoutOutcome
 import com.beettechnologies.posly.cart.CreateCartOutcome
 import com.beettechnologies.posly.cart.DiscountDto
 import com.beettechnologies.posly.cart.GetCartOutcome
@@ -117,6 +118,9 @@ private class FakeDetailCartApi(
         error("not used in these tests")
 
     override suspend fun setCartDiscount(cartId: String, discount: DiscountDto?): SetCartDiscountOutcome =
+        error("not used in these tests")
+
+    override suspend fun checkout(cartId: String, idempotencyKey: String): CheckoutOutcome =
         error("not used in these tests")
 }
 

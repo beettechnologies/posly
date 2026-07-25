@@ -1,6 +1,7 @@
 package com.beettechnologies.posly.cart
 
 import com.beettechnologies.posly.auth.ErrorResponse
+import com.beettechnologies.posly.orders.OrderResponse
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.delete
@@ -56,6 +57,13 @@ sealed class SetCartDiscountOutcome {
     data class NetworkError(val message: String) : SetCartDiscountOutcome()
 }
 
+sealed class CheckoutOutcome {
+    data class Success(val order: OrderResponse, val replayed: Boolean) : CheckoutOutcome()
+    data object CartNotFound : CheckoutOutcome()
+    data class Rejected(val message: String) : CheckoutOutcome()
+    data class NetworkError(val message: String) : CheckoutOutcome()
+}
+
 interface CartApi {
     suspend fun createCart(storeId: String): CreateCartOutcome
     suspend fun getCart(id: String): GetCartOutcome
@@ -69,6 +77,7 @@ interface CartApi {
     suspend fun updateItemQuantity(cartId: String, itemId: String, quantity: Int): UpdateCartItemQuantityOutcome
     suspend fun removeItem(cartId: String, itemId: String, reason: String? = null): RemoveCartItemOutcome
     suspend fun setCartDiscount(cartId: String, discount: DiscountDto?): SetCartDiscountOutcome
+    suspend fun checkout(cartId: String, idempotencyKey: String): CheckoutOutcome
 }
 
 class KtorCartApi(
@@ -213,5 +222,26 @@ class KtorCartApi(
         throw e
     } catch (e: Exception) {
         SetCartDiscountOutcome.NetworkError(e.message ?: "Network error")
+    }
+
+    override suspend fun checkout(cartId: String, idempotencyKey: String): CheckoutOutcome = try {
+        val response = httpClient.post("$baseUrl/carts/$cartId/checkout") {
+            contentType(ContentType.Application.Json)
+            setBody(CheckoutRequest(idempotencyKey))
+        }
+        when (response.status) {
+            HttpStatusCode.Created -> CheckoutOutcome.Success(response.body(), replayed = false)
+            HttpStatusCode.OK -> CheckoutOutcome.Success(response.body(), replayed = true)
+            HttpStatusCode.NotFound -> CheckoutOutcome.CartNotFound
+            HttpStatusCode.Conflict, HttpStatusCode.BadRequest -> {
+                val error = runCatching { response.body<ErrorResponse>() }.getOrNull()
+                CheckoutOutcome.Rejected(error?.error ?: "Unable to checkout")
+            }
+            else -> CheckoutOutcome.NetworkError("Server error (${response.status.value})")
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        CheckoutOutcome.NetworkError(e.message ?: "Network error")
     }
 }

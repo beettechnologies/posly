@@ -2,11 +2,15 @@ package com.beettechnologies.posly.payments
 
 import com.beettechnologies.posly.cart.OrderService
 import com.beettechnologies.posly.cart.OrderStatus
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.security.MessageDigest
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
+import kotlin.math.roundToInt
 
 sealed class CreatePaymentResult {
     data class Success(val payment: GatewayPayment) : CreatePaymentResult()
@@ -31,13 +35,26 @@ sealed class RefundPaymentResult {
  * The payment microservice's orchestration layer: creates payments against the abstracted
  * [PaymentGateway], applies asynchronous terminal webhooks, and drives refunds - notifying
  * [OrderService] whenever a payment's outcome changes the order it belongs to.
+ *
+ * There is no real terminal here, so [autoResolveScope], when supplied, stands in for one: after
+ * [autoResolveDelayMillis] it resolves a still-INITIATED payment itself, the same way a real
+ * terminal's webhook would. The outcome is a deterministic function of the amount's cents so a
+ * cashier (or a test) can trigger a given outcome on demand - mirrors this project's existing
+ * "test pairing code" convention for demoable, memorable test values:
+ *  - a total ending in .13 -> DECLINED
+ *  - a total ending in .99 -> left INITIATED forever, simulating a terminal that never responds
+ *  - anything else -> APPROVED
+ * Left null (the default), auto-resolution is disabled entirely - existing/production behavior
+ * where only a real webhook call can move a payment out of INITIATED.
  */
 class PaymentGatewayService(
     private val gateway: PaymentGateway,
     private val orderService: OrderService,
     private val webhookSecret: String,
     private val retryPolicy: RetryPolicy = RetryPolicy(),
-    private val nowProvider: () -> Instant = { Instant.now() }
+    private val nowProvider: () -> Instant = { Instant.now() },
+    private val autoResolveScope: CoroutineScope? = null,
+    private val autoResolveDelayMillis: Long = 2000
 ) {
     private val payments = ConcurrentHashMap<String, GatewayPayment>()
     private val processedWebhookEventIds = ConcurrentHashMap.newKeySet<String>()
@@ -58,9 +75,32 @@ class PaymentGatewayService(
                 updatedAt = now
             )
             payments[payment.id] = payment
+            scheduleAutoResolve(payment)
             CreatePaymentResult.Success(payment)
         } catch (e: GatewayException) {
             CreatePaymentResult.GatewayError(e.message ?: "Gateway error")
+        }
+    }
+
+    private fun scheduleAutoResolve(payment: GatewayPayment) {
+        val scope = autoResolveScope ?: return
+        scope.launch {
+            delay(autoResolveDelayMillis)
+            when ((payment.amount * 100).roundToInt() % 100) {
+                13 -> handleWebhook(
+                    eventId = "auto-resolve-${payment.id}",
+                    terminalTransactionId = payment.terminalTransactionId,
+                    approved = false,
+                    declineReason = "Card declined (simulated)"
+                )
+                99 -> Unit
+                else -> handleWebhook(
+                    eventId = "auto-resolve-${payment.id}",
+                    terminalTransactionId = payment.terminalTransactionId,
+                    approved = true,
+                    declineReason = null
+                )
+            }
         }
     }
 

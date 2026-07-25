@@ -61,6 +61,7 @@ object SaleScreenTags {
     const val QUICK_DISCOUNT_PREFIX = "sale_quick_discount_"
     const val CLEAR_DISCOUNT_BUTTON = "sale_clear_discount_button"
     const val DISCOUNT_TEXT = "sale_discount_text"
+    const val CHARGE_BUTTON = "sale_charge_button"
 }
 
 private val QUICK_DISCOUNT_PERCENTAGES = listOf(5.0, 10.0, 15.0)
@@ -260,8 +261,25 @@ fun SaleScreen(
                         modifier = Modifier.testTag(SaleScreenTags.TOTAL_TEXT)
                     )
                 }
+
+                Button(
+                    onClick = viewModel::charge,
+                    enabled = !uiState.cart?.items.isNullOrEmpty() && !uiState.isCheckingOut,
+                    modifier = Modifier.padding(top = 8.dp).testTag(SaleScreenTags.CHARGE_BUTTON)
+                ) {
+                    Text("Charge")
+                }
             }
         }
+    }
+
+    val checkedOutOrderId = uiState.checkedOutOrderId
+    if (checkedOutOrderId != null) {
+        PaymentModal(
+            orderId = checkedOutOrderId,
+            onDismiss = viewModel::dismissPaymentModal,
+            onCompleted = viewModel::onPaymentCompleted
+        )
     }
 
     val selectedProductId = uiState.selectedProductId

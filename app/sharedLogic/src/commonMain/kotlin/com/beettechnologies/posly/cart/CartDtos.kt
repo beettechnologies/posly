@@ -29,6 +29,9 @@ data class VoidCartItemRequest(val reason: String? = null)
 data class SetCartDiscountRequest(val discount: DiscountDto?)
 
 @Serializable
+data class CheckoutRequest(val idempotencyKey: String)
+
+@Serializable
 data class SelectedModifierResponse(val modifierId: String, val option: String, val additionalCost: Double)
 
 @Serializable

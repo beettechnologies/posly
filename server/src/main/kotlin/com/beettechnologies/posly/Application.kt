@@ -61,7 +61,12 @@ fun Application.module() {
     val orderService = OrderService()
     val cartService = CartService(productService, storeService, taxProfileService, orderService)
     val webhookSecret = environment.config.config("payments").property("webhookSecret").getString()
-    val paymentGatewayService = PaymentGatewayService(SimulatorPaymentGateway(), orderService, webhookSecret)
+    val paymentGatewayService = PaymentGatewayService(
+        SimulatorPaymentGateway(),
+        orderService,
+        webhookSecret,
+        autoResolveScope = this
+    )
 
     configureObservability()
 

@@ -6,6 +6,7 @@ import com.beettechnologies.posly.cart.CartItemResponse
 import com.beettechnologies.posly.cart.CartResponse
 import com.beettechnologies.posly.cart.CartSessionStore
 import com.beettechnologies.posly.cart.CartTotalsResponse
+import com.beettechnologies.posly.cart.CheckoutOutcome
 import com.beettechnologies.posly.cart.CreateCartOutcome
 import com.beettechnologies.posly.cart.DiscountDto
 import com.beettechnologies.posly.cart.GetCartOutcome
@@ -15,6 +16,7 @@ import com.beettechnologies.posly.cart.SetCartDiscountOutcome
 import com.beettechnologies.posly.cart.UpdateCartItemQuantityOutcome
 import com.beettechnologies.posly.devices.DeviceCredentials
 import com.beettechnologies.posly.devices.DeviceCredentialsStore
+import com.beettechnologies.posly.orders.OrderResponse
 import com.beettechnologies.posly.products.ProductSearchApi
 import com.beettechnologies.posly.products.SearchOutcome
 import com.beettechnologies.posly.products.SearchResponse
@@ -93,16 +95,20 @@ private class FakeCartApi(
     private var currentCart: CartResponse = cart(),
     private val getCartOutcome: GetCartOutcome? = null,
     private val updateQuantityOutcome: UpdateCartItemQuantityOutcome? = null,
-    private val removeItemOutcome: RemoveCartItemOutcome? = null
+    private val removeItemOutcome: RemoveCartItemOutcome? = null,
+    private val checkoutOutcome: CheckoutOutcome? = null
 ) : CartApi {
     var createCartCalls = 0
     var addItemCalls = 0
+    var checkoutCalls = 0
     var lastUpdateQuantityCall: Pair<String, Int>? = null
     var lastRemoveItemCall: Pair<String, String?>? = null
     var lastSetDiscountCall: DiscountDto? = null
+    var lastCheckoutIdempotencyKey: String? = null
 
     override suspend fun createCart(storeId: String): CreateCartOutcome {
         createCartCalls++
+        currentCart = cart(id = "cart-${createCartCalls + 1}", items = emptyList())
         return CreateCartOutcome.Success(currentCart)
     }
 
@@ -159,6 +165,25 @@ private class FakeCartApi(
         lastSetDiscountCall = discount
         currentCart = currentCart.copy(discount = discount)
         return SetCartDiscountOutcome.Success(currentCart)
+    }
+
+    override suspend fun checkout(cartId: String, idempotencyKey: String): CheckoutOutcome {
+        checkoutCalls++
+        lastCheckoutIdempotencyKey = idempotencyKey
+        checkoutOutcome?.let { return it }
+        currentCart = currentCart.copy(status = "CHECKED_OUT")
+        val order = OrderResponse(
+            id = "order-1",
+            cartId = cartId,
+            storeId = currentCart.storeId,
+            items = currentCart.items,
+            discount = currentCart.discount,
+            totals = currentCart.totals,
+            idempotencyKey = idempotencyKey,
+            checkedOutAt = "2026-01-01T00:00:00Z",
+            status = "PENDING"
+        )
+        return CheckoutOutcome.Success(order, replayed = false)
     }
 }
 
@@ -467,6 +492,96 @@ class SaleViewModelTest {
 
         assertEquals(null, cartApi.lastSetDiscountCall)
         assertEquals(null, viewModel.uiState.value.cart?.discount)
+    }
+
+    @Test
+    fun `charging checks out the cart and opens the payment modal against the resulting order`() = runTest(dispatcher) {
+        val existingCart = cart(items = listOf(cartItem()))
+        val cartApi = FakeCartApi(currentCart = existingCart, getCartOutcome = GetCartOutcome.Success(existingCart))
+        val viewModel = SaleViewModel(FakeDeviceCredentialsStore(), FakeCartSessionStore(cartId = existingCart.id), cartApi, FakeProductSearchApi())
+        advanceUntilIdle()
+
+        viewModel.charge()
+        advanceUntilIdle()
+
+        assertEquals(1, cartApi.checkoutCalls)
+        assertEquals("order-1", viewModel.uiState.value.checkedOutOrderId)
+        assertEquals(false, viewModel.uiState.value.isCheckingOut)
+    }
+
+    @Test
+    fun `charging an empty cart is a no-op`() = runTest(dispatcher) {
+        val existingCart = cart(items = emptyList())
+        val cartApi = FakeCartApi(currentCart = existingCart, getCartOutcome = GetCartOutcome.Success(existingCart))
+        val viewModel = SaleViewModel(FakeDeviceCredentialsStore(), FakeCartSessionStore(cartId = existingCart.id), cartApi, FakeProductSearchApi())
+        advanceUntilIdle()
+
+        viewModel.charge()
+        advanceUntilIdle()
+
+        assertEquals(0, cartApi.checkoutCalls)
+        assertEquals(null, viewModel.uiState.value.checkedOutOrderId)
+    }
+
+    @Test
+    fun `a rejected checkout surfaces the server's error message`() = runTest(dispatcher) {
+        val existingCart = cart(items = listOf(cartItem()))
+        val cartApi = FakeCartApi(
+            currentCart = existingCart,
+            getCartOutcome = GetCartOutcome.Success(existingCart),
+            checkoutOutcome = CheckoutOutcome.Rejected("Cannot checkout an empty cart")
+        )
+        val viewModel = SaleViewModel(FakeDeviceCredentialsStore(), FakeCartSessionStore(cartId = existingCart.id), cartApi, FakeProductSearchApi())
+        advanceUntilIdle()
+
+        viewModel.charge()
+        advanceUntilIdle()
+
+        assertEquals("Cannot checkout an empty cart", viewModel.uiState.value.errorMessage)
+        assertEquals(null, viewModel.uiState.value.checkedOutOrderId)
+    }
+
+    @Test
+    fun `dismissing the payment modal clears the checked-out order without starting a new sale`() = runTest(dispatcher) {
+        val existingCart = cart(items = listOf(cartItem()))
+        val cartApi = FakeCartApi(currentCart = existingCart)
+        val viewModel = SaleViewModel(FakeDeviceCredentialsStore(), FakeCartSessionStore(cartId = existingCart.id), cartApi, FakeProductSearchApi())
+        advanceUntilIdle()
+        viewModel.charge()
+        advanceUntilIdle()
+
+        viewModel.dismissPaymentModal()
+
+        assertEquals(null, viewModel.uiState.value.checkedOutOrderId)
+        assertEquals(0, cartApi.createCartCalls, "no new cart should be created just from dismissing")
+    }
+
+    @Test
+    fun `completing payment clears the checked-out order and starts a new sale`() = runTest(dispatcher) {
+        val existingCart = cart(items = listOf(cartItem()))
+        val cartApi = FakeCartApi(currentCart = existingCart)
+        val viewModel = SaleViewModel(FakeDeviceCredentialsStore(), FakeCartSessionStore(cartId = existingCart.id), cartApi, FakeProductSearchApi())
+        advanceUntilIdle()
+        viewModel.charge()
+        advanceUntilIdle()
+
+        val completedOrder = OrderResponse(
+            id = "order-1",
+            cartId = existingCart.id,
+            storeId = existingCart.storeId,
+            items = existingCart.items,
+            discount = null,
+            totals = emptyTotals(),
+            idempotencyKey = "key-1",
+            checkedOutAt = "2026-01-01T00:00:00Z",
+            status = "PAID"
+        )
+        viewModel.onPaymentCompleted(completedOrder)
+        advanceUntilIdle()
+
+        assertEquals(null, viewModel.uiState.value.checkedOutOrderId)
+        assertTrue(viewModel.uiState.value.infoMessage.orEmpty().contains("Sale complete"))
+        assertEquals(0, viewModel.uiState.value.cart?.items?.size)
     }
 
     @Test

@@ -6,6 +6,8 @@ import com.beettechnologies.posly.auth.platformAuthModule
 import com.beettechnologies.posly.auth.sharedUiModule
 import com.beettechnologies.posly.cart.cartModule
 import com.beettechnologies.posly.devices.devicesModule
+import com.beettechnologies.posly.orders.ordersModule
+import com.beettechnologies.posly.payments.paymentsModule
 import com.beettechnologies.posly.products.productsModule
 import com.beettechnologies.posly.stores.storesModule
 import org.koin.android.ext.koin.androidContext
@@ -23,7 +25,9 @@ class PoslyApplication : Application() {
                 storesModule,
                 devicesModule,
                 productsModule,
-                cartModule
+                cartModule,
+                ordersModule,
+                paymentsModule
             )
         }
     }

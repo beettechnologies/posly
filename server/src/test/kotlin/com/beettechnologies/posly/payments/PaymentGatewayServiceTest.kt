@@ -7,6 +7,9 @@ import com.beettechnologies.posly.cart.Order
 import com.beettechnologies.posly.cart.OrderService
 import com.beettechnologies.posly.cart.OrderStatus
 import com.beettechnologies.posly.products.TaxCategory
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import java.time.Instant
 import javax.crypto.Mac
@@ -47,6 +50,19 @@ class PaymentGatewayServiceTest {
     private fun newService(gateway: PaymentGateway = SimulatorPaymentGateway()): Pair<PaymentGatewayService, OrderService> {
         val orderService = OrderService()
         val service = PaymentGatewayService(gateway, orderService, WEBHOOK_SECRET, retryPolicy = FAST_RETRY)
+        return service to orderService
+    }
+
+    private fun newAutoResolvingService(): Pair<PaymentGatewayService, OrderService> {
+        val orderService = OrderService()
+        val service = PaymentGatewayService(
+            SimulatorPaymentGateway(),
+            orderService,
+            WEBHOOK_SECRET,
+            retryPolicy = FAST_RETRY,
+            autoResolveScope = CoroutineScope(Dispatchers.Default),
+            autoResolveDelayMillis = 5
+        )
         return service to orderService
     }
 
@@ -187,5 +203,54 @@ class PaymentGatewayServiceTest {
 
         val error = assertIs<CreatePaymentResult.GatewayError>(result)
         assertTrue(error.message.isNotBlank())
+    }
+
+    @Test
+    fun `auto-resolve approves a normal-amount payment after the delay and confirms the order`() = runBlocking {
+        val (service, orderService) = newAutoResolvingService()
+        val order = seedOrder(orderService, amount = 10.0)
+
+        val payment = (service.createPayment(order.id, 10.0, "USD") as CreatePaymentResult.Success).payment
+        delay(100)
+
+        assertEquals(GatewayPaymentStatus.APPROVED, service.getPayment(payment.id)?.status)
+        assertEquals(OrderStatus.PAID, orderService.getOrder(order.id)?.status)
+    }
+
+    @Test
+    fun `auto-resolve declines a payment for a total ending in dot-13`() = runBlocking {
+        val (service, orderService) = newAutoResolvingService()
+        val order = seedOrder(orderService, amount = 10.13)
+
+        val payment = (service.createPayment(order.id, 10.13, "USD") as CreatePaymentResult.Success).payment
+        delay(100)
+
+        val resolved = service.getPayment(payment.id)
+        assertEquals(GatewayPaymentStatus.DECLINED, resolved?.status)
+        assertEquals("Card declined (simulated)", resolved?.declineReason)
+        assertEquals(OrderStatus.PENDING, orderService.getOrder(order.id)?.status)
+    }
+
+    @Test
+    fun `auto-resolve leaves a payment for a total ending in dot-99 stuck at initiated`() = runBlocking {
+        val (service, orderService) = newAutoResolvingService()
+        val order = seedOrder(orderService, amount = 10.99)
+
+        val payment = (service.createPayment(order.id, 10.99, "USD") as CreatePaymentResult.Success).payment
+        delay(100)
+
+        assertEquals(GatewayPaymentStatus.INITIATED, service.getPayment(payment.id)?.status)
+        assertEquals(OrderStatus.PENDING, orderService.getOrder(order.id)?.status)
+    }
+
+    @Test
+    fun `without an auto-resolve scope a payment stays initiated indefinitely`() = runBlocking {
+        val (service, orderService) = newService()
+        val order = seedOrder(orderService)
+
+        val payment = (service.createPayment(order.id, 10.0, "USD") as CreatePaymentResult.Success).payment
+        delay(50)
+
+        assertEquals(GatewayPaymentStatus.INITIATED, service.getPayment(payment.id)?.status)
     }
 }
