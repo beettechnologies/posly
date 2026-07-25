@@ -24,6 +24,7 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 private const val TEST_WEBHOOK_SECRET = "test-webhook-secret-at-least-this-long"
 
@@ -135,6 +136,10 @@ class PaymentRoutesTest {
         val payment = createPayment(client, cashierTok, orderId)
 
         assertEquals("INITIATED", payment["status"]?.jsonPrimitive?.content)
+        assertTrue(
+            payment["maskedCardNumber"]!!.jsonPrimitive.content.matches(Regex("""•{4} •{4} •{4} \d{4}""")),
+            "no real terminal exists here, so this must be the simulator's fabricated masked display value"
+        )
     }
 
     @Test
@@ -168,7 +173,12 @@ class PaymentRoutesTest {
         val orderResp = client.get("/orders/$orderId") {
             header(HttpHeaders.Authorization, "Bearer $cashierTok")
         }
-        assertEquals("PAID", Json.parseToJsonElement(orderResp.bodyAsText()).jsonObject["status"]?.jsonPrimitive?.content)
+        val orderBody = Json.parseToJsonElement(orderResp.bodyAsText()).jsonObject
+        assertEquals("PAID", orderBody["status"]?.jsonPrimitive?.content)
+        assertEquals(
+            payment["maskedCardNumber"]?.jsonPrimitive?.content,
+            (orderBody["payments"] as JsonArray).single().jsonObject["maskedCardNumber"]?.jsonPrimitive?.content
+        )
     }
 
     @Test

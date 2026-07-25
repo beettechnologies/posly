@@ -9,6 +9,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -21,6 +22,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.beettechnologies.posly.orders.OrderResponse
+import com.beettechnologies.posly.orders.PaymentRecordResponse
 import org.koin.compose.viewmodel.koinViewModel
 
 object PaymentModalTags {
@@ -28,9 +30,12 @@ object PaymentModalTags {
     const val LOADING_INDICATOR = "payment_loading_indicator"
     const val LOAD_ERROR_TEXT = "payment_load_error_text"
     const val TOTAL_TEXT = "payment_total_text"
+    const val REMAINING_BALANCE_TEXT = "payment_remaining_balance_text"
+    const val APPLIED_TENDER_PREFIX = "payment_applied_tender_"
     const val TENDER_CARD_BUTTON = "payment_tender_card_button"
     const val TENDER_CASH_BUTTON = "payment_tender_cash_button"
     const val TENDER_GIFT_BUTTON = "payment_tender_gift_button"
+    const val AMOUNT_TO_APPLY_FIELD = "payment_amount_to_apply_field"
     const val CASH_AMOUNT_FIELD = "payment_cash_amount_field"
     const val CHANGE_DUE_TEXT = "payment_change_due_text"
     const val TERMINAL_STATE_TEXT = "payment_terminal_state_text"
@@ -75,12 +80,29 @@ fun PaymentModal(
                     )
                 }
 
-                if (uiState.order != null) {
+                val order = uiState.order
+                if (order != null) {
                     Text(
                         text = "Total due: $${uiState.total}",
                         style = MaterialTheme.typography.titleMedium,
                         modifier = Modifier.testTag(PaymentModalTags.TOTAL_TEXT)
                     )
+                    Text(
+                        text = "Remaining: $${uiState.remainingBalance}",
+                        modifier = Modifier.testTag(PaymentModalTags.REMAINING_BALANCE_TEXT)
+                    )
+
+                    if (order.payments.isNotEmpty()) {
+                        HorizontalDivider(modifier = Modifier.padding(top = 8.dp))
+                        Column(modifier = Modifier.padding(top = 8.dp)) {
+                            order.payments.forEachIndexed { index, payment ->
+                                Text(
+                                    text = tenderSummary(payment),
+                                    modifier = Modifier.testTag(PaymentModalTags.APPLIED_TENDER_PREFIX + index)
+                                )
+                            }
+                        }
+                    }
 
                     Row(modifier = Modifier.padding(top = 12.dp)) {
                         TenderButton(
@@ -106,28 +128,39 @@ fun PaymentModal(
                         )
                     }
 
+                    OutlinedTextField(
+                        value = uiState.amountToApply,
+                        onValueChange = viewModel::updateAmountToApply,
+                        label = { Text("Amount to apply") },
+                        enabled = !uiState.isBusy,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 12.dp)
+                            .testTag(PaymentModalTags.AMOUNT_TO_APPLY_FIELD)
+                    )
+
                     when (uiState.selectedTender) {
                         Tender.CASH -> {
                             OutlinedTextField(
                                 value = uiState.cashTendered,
                                 onValueChange = viewModel::updateCashTendered,
-                                label = { Text("Amount tendered") },
+                                label = { Text("Cash tendered") },
                                 enabled = !uiState.isBusy,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(top = 12.dp)
+                                    .padding(top = 8.dp)
                                     .testTag(PaymentModalTags.CASH_AMOUNT_FIELD)
                             )
                             val change = uiState.changeDue
                             Text(
-                                text = if (change != null) "Change due: $${change}" else "Amount tendered is less than the total due",
+                                text = if (change != null) "Change due: $${change}" else "Cash tendered must cover the amount to apply",
                                 modifier = Modifier.padding(top = 8.dp).testTag(PaymentModalTags.CHANGE_DUE_TEXT)
                             )
                         }
 
                         Tender.GIFT_CARD -> {
                             Text(
-                                text = "Charges the full amount to the gift card.",
+                                text = "Charges the amount above to the gift card.",
                                 modifier = Modifier.padding(top = 12.dp)
                             )
                         }
@@ -138,9 +171,9 @@ fun PaymentModal(
                                     TerminalState.IDLE -> "Ready to start"
                                     TerminalState.POLLING -> "Waiting for the terminal..."
                                     TerminalState.APPROVED -> "Approved"
-                                    TerminalState.DECLINED -> "Declined"
-                                    TerminalState.TIMED_OUT -> "Timed out"
-                                    TerminalState.ERROR -> "Error"
+                                    TerminalState.DECLINED -> "Declined - retry or choose another tender below"
+                                    TerminalState.TIMED_OUT -> "Timed out - retry or choose another tender below"
+                                    TerminalState.ERROR -> "Error - retry or choose another tender below"
                                 },
                                 modifier = Modifier.padding(top = 12.dp).testTag(PaymentModalTags.TERMINAL_STATE_TEXT)
                             )
@@ -164,7 +197,7 @@ fun PaymentModal(
                     uiState.terminalState == TerminalState.TIMED_OUT
                 Button(
                     onClick = viewModel::startTerminal,
-                    enabled = uiState.order != null &&
+                    enabled = uiState.amountToApplyValue != null &&
                         uiState.terminalState != TerminalState.POLLING &&
                         uiState.terminalState != TerminalState.APPROVED,
                     modifier = Modifier.testTag(PaymentModalTags.START_TERMINAL_BUTTON)
@@ -174,8 +207,8 @@ fun PaymentModal(
             } else {
                 Button(
                     onClick = viewModel::confirmNonCardPayment,
-                    enabled = uiState.order != null && !uiState.isBusy &&
-                        (uiState.selectedTender != Tender.CASH || uiState.changeDue != null),
+                    enabled = !uiState.isBusy &&
+                        (if (uiState.selectedTender == Tender.CASH) uiState.changeDue != null else uiState.amountToApplyValue != null),
                     modifier = Modifier.testTag(PaymentModalTags.CONFIRM_BUTTON)
                 ) {
                     Text("Confirm")
@@ -188,6 +221,11 @@ fun PaymentModal(
             }
         }
     )
+}
+
+private fun tenderSummary(payment: PaymentRecordResponse): String {
+    val cardDetail = payment.maskedCardNumber?.let { masked -> " (${masked}, auth ${payment.reference})" }.orEmpty()
+    return "${payment.method}: $${payment.amount}$cardDetail"
 }
 
 @Composable

@@ -114,7 +114,19 @@ class PaymentGatewayServiceTest {
         val success = assertIs<WebhookResult.Success>(result)
         assertEquals(GatewayPaymentStatus.APPROVED, success.payment.status)
         assertEquals(OrderStatus.PAID, orderService.getOrder(order.id)?.status)
-        assertEquals(payment.terminalTransactionId, orderService.getOrder(order.id)?.payment?.reference)
+        assertEquals(payment.terminalTransactionId, orderService.getOrder(order.id)?.payments?.single()?.reference)
+    }
+
+    @Test
+    fun `an approved card payment's masked card number ends up on the order's payment record`() = runBlocking {
+        val (service, orderService) = newService()
+        val order = seedOrder(orderService)
+        val payment = (service.createPayment(order.id, 10.0, "USD") as CreatePaymentResult.Success).payment
+        assertTrue(payment.maskedCardNumber.matches(Regex("""•{4} •{4} •{4} \d{4}""")))
+
+        service.handleWebhook("evt-1", payment.terminalTransactionId, approved = true, declineReason = null)
+
+        assertEquals(payment.maskedCardNumber, orderService.getOrder(order.id)?.payments?.single()?.maskedCardNumber)
     }
 
     @Test

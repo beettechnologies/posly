@@ -25,6 +25,8 @@ data class PaymentUiState(
     val order: OrderResponse? = null,
     val loadError: String? = null,
     val selectedTender: Tender = Tender.CARD,
+    /** Editable for every tender type - defaults to the full remaining balance but can be reduced for a split. */
+    val amountToApply: String = "",
     val cashTendered: String = "",
     val terminalState: TerminalState = TerminalState.IDLE,
     val errorMessage: String? = null,
@@ -32,10 +34,18 @@ data class PaymentUiState(
     val completedOrder: OrderResponse? = null
 ) {
     val total: Double get() = order?.totals?.total ?: 0.0
+    val remainingBalance: Double get() = order?.remainingBalance ?: 0.0
 
-    /** Non-null only once a valid amount >= the total has been entered - drives both display and the Confirm button's enabled state. */
+    /** Non-null only once a positive amount not exceeding what's still owed has been entered. */
+    val amountToApplyValue: Double?
+        get() = amountToApply.toDoubleOrNull()?.takeIf { it > 0.0 && it <= remainingBalance + 0.001 }
+
+    /** Non-null only once a valid amount-to-apply AND cash covering it have been entered. */
     val changeDue: Double?
-        get() = cashTendered.toDoubleOrNull()?.let { it - total }?.takeIf { it >= 0.0 }
+        get() {
+            val applied = amountToApplyValue ?: return null
+            return cashTendered.toDoubleOrNull()?.let { it - applied }?.takeIf { it >= -0.001 }
+        }
 
     val isBusy: Boolean get() = isConfirming || terminalState == TerminalState.POLLING
 }
@@ -45,6 +55,11 @@ data class PaymentUiState(
  * Card is a two-step, asynchronous flow with no real terminal behind it: [startTerminal] creates a
  * gateway payment then polls [PaymentApi.getPayment] until the simulator's auto-resolve (see
  * PaymentGatewayService) settles it, or [pollTimeoutMillis] elapses.
+ *
+ * Every tender applies [PaymentUiState.amountToApplyValue] rather than always the full total, so a
+ * split/partial payment works uniformly across tender types: a tender that doesn't fully cover the
+ * order loops back to tender selection with the updated remaining balance instead of completing -
+ * [PaymentUiState.completedOrder] is only set once the order's own status reports fully PAID.
  */
 class PaymentViewModel(
     private val orderApi: OrderApi,
@@ -62,8 +77,11 @@ class PaymentViewModel(
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoadingOrder = true, loadError = null)
             when (val result = orderApi.getOrder(orderId)) {
-                is GetOrderOutcome.Success -> _uiState.value =
-                    _uiState.value.copy(isLoadingOrder = false, order = result.order)
+                is GetOrderOutcome.Success -> _uiState.value = _uiState.value.copy(
+                    isLoadingOrder = false,
+                    order = result.order,
+                    amountToApply = result.order.remainingBalance.toString()
+                )
                 GetOrderOutcome.NotFound -> _uiState.value =
                     _uiState.value.copy(isLoadingOrder = false, loadError = "Order not found")
                 is GetOrderOutcome.NetworkError -> _uiState.value =
@@ -76,10 +94,15 @@ class PaymentViewModel(
         if (_uiState.value.isBusy) return
         _uiState.value = _uiState.value.copy(
             selectedTender = tender,
+            amountToApply = _uiState.value.remainingBalance.toString(),
             cashTendered = "",
             terminalState = TerminalState.IDLE,
             errorMessage = null
         )
+    }
+
+    fun updateAmountToApply(value: String) {
+        _uiState.value = _uiState.value.copy(amountToApply = value)
     }
 
     fun updateCashTendered(value: String) {
@@ -90,15 +113,15 @@ class PaymentViewModel(
         val state = _uiState.value
         val order = state.order ?: return
         if (state.isBusy) return
+        val amount = state.amountToApplyValue ?: return
         if (state.selectedTender == Tender.CASH && state.changeDue == null) return
 
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isConfirming = true, errorMessage = null)
             val method = if (state.selectedTender == Tender.CASH) "CASH" else "GIFT_CARD"
             val reference = if (state.selectedTender == Tender.CASH) state.cashTendered else null
-            when (val result = orderApi.confirmPayment(order.id, method, state.total, reference)) {
-                is ConfirmPaymentOutcome.Success -> _uiState.value =
-                    _uiState.value.copy(isConfirming = false, order = result.order, completedOrder = result.order)
+            when (val result = orderApi.confirmPayment(order.id, method, amount, reference)) {
+                is ConfirmPaymentOutcome.Success -> applyTenderResult(result.order)
                 ConfirmPaymentOutcome.OrderNotFound -> _uiState.value =
                     _uiState.value.copy(isConfirming = false, errorMessage = "Order not found")
                 is ConfirmPaymentOutcome.Rejected -> _uiState.value =
@@ -113,13 +136,14 @@ class PaymentViewModel(
     fun startTerminal() {
         val state = _uiState.value
         val order = state.order ?: return
+        val amount = state.amountToApplyValue ?: return
         if (state.terminalState == TerminalState.POLLING) return
 
         pollJob?.cancel()
         _uiState.value = _uiState.value.copy(terminalState = TerminalState.POLLING, errorMessage = null)
 
         pollJob = viewModelScope.launch {
-            when (val result = paymentApi.createPayment(order.id, state.total, "USD")) {
+            when (val result = paymentApi.createPayment(order.id, amount, "USD")) {
                 is CreatePaymentOutcome.Success -> pollPayment(result.payment.id)
                 CreatePaymentOutcome.OrderNotFound -> _uiState.value =
                     _uiState.value.copy(terminalState = TerminalState.ERROR, errorMessage = "Order not found")
@@ -146,7 +170,8 @@ class PaymentViewModel(
                     "DECLINED" -> {
                         _uiState.value = _uiState.value.copy(
                             terminalState = TerminalState.DECLINED,
-                            errorMessage = result.payment.declineReason ?: "Card declined"
+                            errorMessage = (result.payment.declineReason ?: "Card declined") +
+                                " - retry or choose another tender below."
                         )
                         return
                     }
@@ -164,19 +189,43 @@ class PaymentViewModel(
         }
         _uiState.value = _uiState.value.copy(
             terminalState = TerminalState.TIMED_OUT,
-            errorMessage = "The terminal did not respond in time"
+            errorMessage = "The terminal did not respond in time - retry or choose another tender below."
         )
     }
 
+    /** A resolved (approved or partial-completing) tender: either finishes the sale or loops back to tender selection. */
     private suspend fun finalizeApprovedPayment() {
         val orderId = _uiState.value.order?.id
         val refreshed = orderId?.let { orderApi.getOrder(it) }
-        val order = (refreshed as? GetOrderOutcome.Success)?.order
-        _uiState.value = _uiState.value.copy(
-            terminalState = TerminalState.APPROVED,
-            order = order ?: _uiState.value.order,
-            completedOrder = order ?: _uiState.value.order
-        )
+        val order = (refreshed as? GetOrderOutcome.Success)?.order ?: _uiState.value.order
+        if (order != null && order.status == "PAID") {
+            _uiState.value = _uiState.value.copy(terminalState = TerminalState.APPROVED, order = order, completedOrder = order)
+        } else if (order != null) {
+            _uiState.value = _uiState.value.copy(
+                terminalState = TerminalState.IDLE,
+                order = order,
+                amountToApply = order.remainingBalance.toString(),
+                cashTendered = "",
+                errorMessage = null
+            )
+        } else {
+            _uiState.value = _uiState.value.copy(terminalState = TerminalState.APPROVED)
+        }
+    }
+
+    private fun applyTenderResult(order: OrderResponse) {
+        _uiState.value = if (order.status == "PAID") {
+            _uiState.value.copy(isConfirming = false, order = order, completedOrder = order)
+        } else {
+            _uiState.value.copy(
+                isConfirming = false,
+                order = order,
+                amountToApply = order.remainingBalance.toString(),
+                cashTendered = "",
+                terminalState = TerminalState.IDLE,
+                errorMessage = null
+            )
+        }
     }
 
     fun dismissError() {

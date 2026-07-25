@@ -47,7 +47,8 @@ data class SaleUiState(
     val errorMessage: String? = null,
     val lastVoidedItem: VoidedCartItem? = null,
     val isCheckingOut: Boolean = false,
-    val checkedOutOrderId: String? = null
+    val checkedOutOrderId: String? = null,
+    val receiptOrder: OrderResponse? = null
 )
 
 class SaleViewModel(
@@ -330,9 +331,14 @@ class SaleViewModel(
         _uiState.value = _uiState.value.copy(checkedOutOrderId = null)
     }
 
-    /** Called once the payment modal has confirmed the order as paid - starts a fresh cart for the next sale. */
+    /** Called once the payment modal has confirmed the order as paid - shows the receipt before starting a new sale. */
     fun onPaymentCompleted(order: OrderResponse) {
-        _uiState.value = SaleUiState(infoMessage = "Sale complete - total $${order.totals.total}")
+        _uiState.value = _uiState.value.copy(checkedOutOrderId = null, receiptOrder = order)
+    }
+
+    /** Dismissing the receipt is what actually starts the next sale. */
+    fun dismissReceipt() {
+        _uiState.value = SaleUiState()
         viewModelScope.launch { initializeCart() }
     }
 

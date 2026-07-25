@@ -114,7 +114,9 @@ class OrderRoutesTest {
         assertEquals(HttpStatusCode.OK, resp.status)
         val body = Json.parseToJsonElement(resp.bodyAsText()).jsonObject
         assertEquals("PAID", body["status"]?.jsonPrimitive?.content)
-        assertEquals("CARD", body["payment"]?.jsonObject?.get("method")?.jsonPrimitive?.content)
+        val payments = body["payments"]!!.jsonArray
+        assertEquals("CARD", payments.single().jsonObject["method"]?.jsonPrimitive?.content)
+        assertEquals(0.0, body["remainingBalance"]?.jsonPrimitive?.content?.toDouble())
     }
 
     @Test
@@ -136,6 +138,60 @@ class OrderRoutesTest {
             setBody("""{"method":"CARD","amount":10.0}""")
         }
         assertEquals(HttpStatusCode.Conflict, secondResp.status)
+    }
+
+    @Test
+    fun `split tenders summing to the total mark the order paid with a breakdown of each tender`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val adminTok = accessToken(client, "admin", "admin123")
+        val cashierTok = accessToken(client, "cashier", "cashier123")
+        val orderId = seedPendingOrder(client, adminTok, cashierTok)
+
+        val firstResp = client.post("/orders/$orderId/payments") {
+            header(HttpHeaders.Authorization, "Bearer $cashierTok")
+            contentType(ContentType.Application.Json)
+            setBody("""{"method":"CASH","amount":4.0}""")
+        }
+        assertEquals(HttpStatusCode.OK, firstResp.status)
+        val firstBody = Json.parseToJsonElement(firstResp.bodyAsText()).jsonObject
+        assertEquals("PENDING", firstBody["status"]?.jsonPrimitive?.content)
+        assertEquals(6.0, firstBody["remainingBalance"]?.jsonPrimitive?.content?.toDouble())
+
+        val secondResp = client.post("/orders/$orderId/payments") {
+            header(HttpHeaders.Authorization, "Bearer $cashierTok")
+            contentType(ContentType.Application.Json)
+            setBody("""{"method":"GIFT_CARD","amount":6.0,"reference":"gift-ref-1"}""")
+        }
+        assertEquals(HttpStatusCode.OK, secondResp.status)
+        val secondBody = Json.parseToJsonElement(secondResp.bodyAsText()).jsonObject
+        assertEquals("PAID", secondBody["status"]?.jsonPrimitive?.content)
+        assertEquals(0.0, secondBody["remainingBalance"]?.jsonPrimitive?.content?.toDouble())
+        val payments = secondBody["payments"]!!.jsonArray
+        assertEquals(listOf("CASH", "GIFT_CARD"), payments.map { it.jsonObject["method"]?.jsonPrimitive?.content })
+        assertEquals(listOf(4.0, 6.0), payments.map { it.jsonObject["amount"]?.jsonPrimitive?.content?.toDouble() })
+    }
+
+    @Test
+    fun `a tender exceeding the remaining balance is rejected`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val adminTok = accessToken(client, "admin", "admin123")
+        val cashierTok = accessToken(client, "cashier", "cashier123")
+        val orderId = seedPendingOrder(client, adminTok, cashierTok)
+        client.post("/orders/$orderId/payments") {
+            header(HttpHeaders.Authorization, "Bearer $cashierTok")
+            contentType(ContentType.Application.Json)
+            setBody("""{"method":"CASH","amount":4.0}""")
+        }
+
+        val resp = client.post("/orders/$orderId/payments") {
+            header(HttpHeaders.Authorization, "Bearer $cashierTok")
+            contentType(ContentType.Application.Json)
+            setBody("""{"method":"CARD","amount":7.0}""")
+        }
+
+        assertEquals(HttpStatusCode.BadRequest, resp.status)
     }
 
     @Test

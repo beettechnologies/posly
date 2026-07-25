@@ -282,6 +282,11 @@ fun SaleScreen(
         )
     }
 
+    val receiptOrder = uiState.receiptOrder
+    if (receiptOrder != null) {
+        ReceiptModal(order = receiptOrder, onDismiss = viewModel::dismissReceipt)
+    }
+
     val selectedProductId = uiState.selectedProductId
     if (selectedProductId != null) {
         ProductDetailModal(

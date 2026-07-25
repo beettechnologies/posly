@@ -21,5 +21,6 @@ data class PaymentResponse(
     val updatedAt: String,
     val declineReason: String? = null,
     val refundId: String? = null,
-    val refundedAmount: Double? = null
+    val refundedAmount: Double? = null,
+    val maskedCardNumber: String? = null
 )

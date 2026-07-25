@@ -112,7 +112,8 @@ data class PaymentRecord(
     val amount: Double,
     val reference: String?,
     val confirmedBy: String?,
-    val confirmedAt: Instant
+    val confirmedAt: Instant,
+    val maskedCardNumber: String? = null
 )
 
 data class RefundRecord(
@@ -134,9 +135,13 @@ data class Order(
     val idempotencyKey: String,
     val checkedOutAt: Instant,
     val status: OrderStatus = OrderStatus.PENDING,
-    val payment: PaymentRecord? = null,
+    /** One entry per tender applied - a split payment accumulates more than one before the order reaches PAID. */
+    val payments: List<PaymentRecord> = emptyList(),
     val refund: RefundRecord? = null
-)
+) {
+    val amountPaid: Double get() = roundCents(payments.sumOf { it.amount })
+    val remainingBalance: Double get() = roundCents(totals.total - amountPaid)
+}
 
 enum class OrderEventType { CREATED, PAYMENT_CONFIRMED, REFUNDED }
 

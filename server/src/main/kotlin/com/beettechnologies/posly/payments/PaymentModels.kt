@@ -21,7 +21,9 @@ data class GatewayPayment(
     val updatedAt: Instant,
     val declineReason: String? = null,
     val refundId: String? = null,
-    val refundedAmount: Double? = null
+    val refundedAmount: Double? = null,
+    /** Fabricated by the simulator - there is no real terminal/PAN behind this, only a display stand-in for receipts. */
+    val maskedCardNumber: String = "•••• •••• •••• ${(1000..9999).random()}"
 )
 
 enum class RefundAttemptStatus { SUCCEEDED, FAILED }

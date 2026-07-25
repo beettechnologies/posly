@@ -557,7 +557,7 @@ class SaleViewModelTest {
     }
 
     @Test
-    fun `completing payment clears the checked-out order and starts a new sale`() = runTest(dispatcher) {
+    fun `completing payment clears the checked-out order and shows a receipt without resetting yet`() = runTest(dispatcher) {
         val existingCart = cart(items = listOf(cartItem()))
         val cartApi = FakeCartApi(currentCart = existingCart)
         val viewModel = SaleViewModel(FakeDeviceCredentialsStore(), FakeCartSessionStore(cartId = existingCart.id), cartApi, FakeProductSearchApi())
@@ -580,7 +580,38 @@ class SaleViewModelTest {
         advanceUntilIdle()
 
         assertEquals(null, viewModel.uiState.value.checkedOutOrderId)
-        assertTrue(viewModel.uiState.value.infoMessage.orEmpty().contains("Sale complete"))
+        assertEquals(completedOrder, viewModel.uiState.value.receiptOrder)
+        // The cart/cashier state is untouched until the receipt is dismissed - no new cart yet.
+        assertEquals(1, viewModel.uiState.value.cart?.items?.size)
+        assertEquals(0, cartApi.createCartCalls)
+    }
+
+    @Test
+    fun `dismissing the receipt clears it and starts a new sale`() = runTest(dispatcher) {
+        val existingCart = cart(items = listOf(cartItem()))
+        val cartApi = FakeCartApi(currentCart = existingCart)
+        val viewModel = SaleViewModel(FakeDeviceCredentialsStore(), FakeCartSessionStore(cartId = existingCart.id), cartApi, FakeProductSearchApi())
+        advanceUntilIdle()
+        viewModel.charge()
+        advanceUntilIdle()
+        val completedOrder = OrderResponse(
+            id = "order-1",
+            cartId = existingCart.id,
+            storeId = existingCart.storeId,
+            items = existingCart.items,
+            discount = null,
+            totals = emptyTotals(),
+            idempotencyKey = "key-1",
+            checkedOutAt = "2026-01-01T00:00:00Z",
+            status = "PAID"
+        )
+        viewModel.onPaymentCompleted(completedOrder)
+        advanceUntilIdle()
+
+        viewModel.dismissReceipt()
+        advanceUntilIdle()
+
+        assertEquals(null, viewModel.uiState.value.receiptOrder)
         assertEquals(0, viewModel.uiState.value.cart?.items?.size)
     }
 

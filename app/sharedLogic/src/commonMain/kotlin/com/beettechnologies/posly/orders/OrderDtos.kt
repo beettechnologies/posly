@@ -11,11 +11,13 @@ data class PaymentRecordResponse(
     val amount: Double,
     val reference: String?,
     val confirmedBy: String?,
-    val confirmedAt: String
+    val confirmedAt: String,
+    val maskedCardNumber: String? = null
 )
 
 @Serializable
 data class RefundRecordResponse(
+    val refundId: String,
     val amount: Double,
     val reason: String?,
     val refundedBy: String?,
@@ -33,7 +35,9 @@ data class OrderResponse(
     val idempotencyKey: String,
     val checkedOutAt: String,
     val status: String,
-    val payment: PaymentRecordResponse? = null,
+    val payments: List<PaymentRecordResponse> = emptyList(),
+    val amountPaid: Double = 0.0,
+    val remainingBalance: Double = 0.0,
     val refund: RefundRecordResponse? = null
 )
 

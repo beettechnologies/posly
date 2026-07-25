@@ -142,7 +142,8 @@ class PaymentGatewayService(
                 method = "TERMINAL",
                 amount = updated.amount,
                 reference = terminalTransactionId,
-                actorId = null
+                actorId = null,
+                maskedCardNumber = updated.maskedCardNumber
             )
         }
         return WebhookResult.Success(updated)

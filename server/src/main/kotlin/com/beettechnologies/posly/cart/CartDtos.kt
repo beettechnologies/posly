@@ -11,6 +11,15 @@ data class SelectedModifierRequest(val modifierId: String, val option: String)
 @Serializable
 data class DiscountDto(val type: String, val value: Double)
 
+class InvalidDiscountDtoException(message: String) : Exception(message)
+
+fun DiscountDto.toDomain(): Discount {
+    val type = runCatching { DiscountType.valueOf(this.type) }.getOrElse {
+        throw InvalidDiscountDtoException("Invalid discount type '${this.type}'")
+    }
+    return Discount(type, value)
+}
+
 @Serializable
 data class AddCartItemRequest(
     val productId: String,
@@ -82,7 +91,8 @@ data class PaymentRecordResponse(
     val amount: Double,
     val reference: String?,
     val confirmedBy: String?,
-    val confirmedAt: String
+    val confirmedAt: String,
+    val maskedCardNumber: String? = null
 )
 
 @Serializable
@@ -105,7 +115,12 @@ data class OrderResponse(
     val idempotencyKey: String,
     val checkedOutAt: String,
     val status: String,
-    val payment: PaymentRecordResponse? = null,
+    // No defaults here: kotlinx.serialization's Json omits any field left at its declared default
+    // when encoding (encodeDefaults = false), and 0.0/emptyList() are exactly the values a fully
+    // paid/brand-new order legitimately has - a default would make them vanish from the response.
+    val payments: List<PaymentRecordResponse>,
+    val amountPaid: Double,
+    val remainingBalance: Double,
     val refund: RefundRecordResponse? = null
 )
 
@@ -170,7 +185,8 @@ fun PaymentRecord.toResponse() = PaymentRecordResponse(
     amount = amount,
     reference = reference,
     confirmedBy = confirmedBy,
-    confirmedAt = confirmedAt.toString()
+    confirmedAt = confirmedAt.toString(),
+    maskedCardNumber = maskedCardNumber
 )
 
 fun RefundRecord.toResponse() = RefundRecordResponse(
@@ -191,7 +207,9 @@ fun Order.toResponse() = OrderResponse(
     idempotencyKey = idempotencyKey,
     checkedOutAt = checkedOutAt.toString(),
     status = status.name,
-    payment = payment?.toResponse(),
+    payments = payments.map { it.toResponse() },
+    amountPaid = amountPaid,
+    remainingBalance = remainingBalance,
     refund = refund?.toResponse()
 )
 

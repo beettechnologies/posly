@@ -21,7 +21,8 @@ data class PaymentResponse(
     val updatedAt: String,
     val declineReason: String? = null,
     val refundId: String? = null,
-    val refundedAmount: Double? = null
+    val refundedAmount: Double? = null,
+    val maskedCardNumber: String? = null
 )
 
 @Serializable
@@ -74,5 +75,6 @@ fun GatewayPayment.toResponse() = PaymentResponse(
     updatedAt = updatedAt.toString(),
     declineReason = declineReason,
     refundId = refundId,
-    refundedAmount = refundedAmount
+    refundedAmount = refundedAmount,
+    maskedCardNumber = maskedCardNumber
 )
