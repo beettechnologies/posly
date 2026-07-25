@@ -17,6 +17,7 @@ import io.ktor.server.config.MapApplicationConfig
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import javax.crypto.Mac
@@ -250,6 +251,33 @@ class PaymentRoutesTest {
             contentType(ContentType.Application.Json)
             setBody("""{"refundId":"refund-1","amount":10.0}""")
         }
+        assertEquals(HttpStatusCode.Forbidden, resp.status)
+    }
+
+    @Test
+    fun `the unresolved-refunds reconciliation endpoint is reachable by admins and empty with no failures`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val adminTok = accessToken(client, "admin", "admin123")
+
+        val resp = client.get("/payments/refunds/unresolved") {
+            header(HttpHeaders.Authorization, "Bearer $adminTok")
+        }
+
+        assertEquals(HttpStatusCode.OK, resp.status)
+        assertEquals(0, (Json.parseToJsonElement(resp.bodyAsText()) as JsonArray).size)
+    }
+
+    @Test
+    fun `cashier cannot view unresolved refunds`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val cashierTok = accessToken(client, "cashier", "cashier123")
+
+        val resp = client.get("/payments/refunds/unresolved") {
+            header(HttpHeaders.Authorization, "Bearer $cashierTok")
+        }
+
         assertEquals(HttpStatusCode.Forbidden, resp.status)
     }
 }

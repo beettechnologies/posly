@@ -88,6 +88,13 @@ fun Application.configurePaymentRoutes(paymentGatewayService: PaymentGatewayServ
                             )
                         }
                     }
+
+                    // Finance/reconciliation surface: refunds that failed at the gateway and haven't
+                    // since succeeded on a retry. No dedicated finance role exists yet, so this reuses
+                    // the same ADMIN/MANAGER set already trusted to execute refunds.
+                    get("/refunds/unresolved") {
+                        call.respond(HttpStatusCode.OK, paymentGatewayService.listUnresolvedRefunds().map { it.toResponse() })
+                    }
                 }
             }
         }

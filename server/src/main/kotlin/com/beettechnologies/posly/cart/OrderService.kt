@@ -11,9 +11,11 @@ sealed class ConfirmPaymentResult {
 }
 
 sealed class RefundResult {
-    data class Success(val order: Order) : RefundResult()
+    data class Success(val order: Order, val replayed: Boolean) : RefundResult()
     data object OrderNotFound : RefundResult()
     data object NotPaid : RefundResult()
+    /** The order was already refunded under a DIFFERENT refundId - not a retry, a genuinely conflicting second refund. */
+    data object AlreadyRefunded : RefundResult()
 }
 
 /**
@@ -88,7 +90,12 @@ class OrderService(private val nowProvider: () -> Instant = { Instant.now() }) {
         return outcome
     }
 
-    fun refund(orderId: String, reason: String?, actorId: String?): RefundResult {
+    /**
+     * Idempotent by [refundId]: a retry with the SAME key against an already-refunded order
+     * replays the original result instead of erroring. A different key against an already-refunded
+     * order is rejected - that's not a retry, it's a second, conflicting refund attempt.
+     */
+    fun refund(orderId: String, refundId: String, reason: String?, actorId: String?): RefundResult {
         var outcome: RefundResult = RefundResult.OrderNotFound
         orders.compute(orderId) { _, existing ->
             when {
@@ -96,26 +103,35 @@ class OrderService(private val nowProvider: () -> Instant = { Instant.now() }) {
                     outcome = RefundResult.OrderNotFound
                     null
                 }
+                existing.status == OrderStatus.REFUNDED -> {
+                    outcome = if (existing.refund?.refundId == refundId) {
+                        RefundResult.Success(existing, replayed = true)
+                    } else {
+                        RefundResult.AlreadyRefunded
+                    }
+                    existing
+                }
                 existing.status != OrderStatus.PAID -> {
                     outcome = RefundResult.NotPaid
                     existing
                 }
                 else -> {
                     val refund = RefundRecord(
+                        refundId = refundId,
                         amount = existing.totals.total,
                         reason = reason,
                         refundedBy = actorId,
                         refundedAt = nowProvider()
                     )
                     val updated = existing.copy(status = OrderStatus.REFUNDED, refund = refund)
-                    outcome = RefundResult.Success(updated)
+                    outcome = RefundResult.Success(updated, replayed = false)
                     updated
                 }
             }
         }
-        if (outcome is RefundResult.Success) {
-            val amount = (outcome as RefundResult.Success).order.refund?.amount
-            recordEvent(orderId, OrderEventType.REFUNDED, actorId, "amount=$amount")
+        val success = outcome as? RefundResult.Success
+        if (success != null && !success.replayed) {
+            recordEvent(orderId, OrderEventType.REFUNDED, actorId, "amount=${success.order.refund?.amount}")
         }
         return outcome
     }

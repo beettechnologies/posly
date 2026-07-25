@@ -58,6 +58,7 @@ class PaymentGatewayService(
 ) {
     private val payments = ConcurrentHashMap<String, GatewayPayment>()
     private val processedWebhookEventIds = ConcurrentHashMap.newKeySet<String>()
+    private val refundAttempts = ConcurrentHashMap<String, RefundAttempt>()
 
     suspend fun createPayment(orderId: String, amount: Double, currency: String): CreatePaymentResult {
         if (orderService.getOrder(orderId) == null) return CreatePaymentResult.OrderNotFound
@@ -147,7 +148,11 @@ class PaymentGatewayService(
         return WebhookResult.Success(updated)
     }
 
-    /** Idempotent by [refundId]: retrying the same refund replays the original result instead of refunding twice. */
+    /**
+     * Idempotent by [refundId]: retrying the same refund replays the original result instead of
+     * refunding twice. Every attempt - success or gateway failure - is recorded in [refundAttempts]
+     * so a failed one is never silently lost; see [listUnresolvedRefunds].
+     */
     suspend fun refund(paymentId: String, refundId: String, amount: Double): RefundPaymentResult {
         val payment = payments[paymentId] ?: return RefundPaymentResult.PaymentNotFound
         if (payment.status == GatewayPaymentStatus.REFUNDED && payment.refundId == refundId) {
@@ -169,16 +174,46 @@ class PaymentGatewayService(
                 )
                 updated
             }
+            recordRefundAttempt(refundId, paymentId, updated.orderId, amount, succeeded = true, error = null)
 
             val order = orderService.getOrder(updated.orderId)
             if (order?.status == OrderStatus.PAID) {
-                orderService.refund(updated.orderId, "Gateway refund $refundId", actorId = null)
+                orderService.refund(updated.orderId, refundId, "Gateway refund $refundId", actorId = null)
             }
             RefundPaymentResult.Success(updated)
         } catch (e: GatewayException) {
+            recordRefundAttempt(refundId, paymentId, payment.orderId, amount, succeeded = false, error = e.message ?: "Gateway error")
             RefundPaymentResult.GatewayError(e.message ?: "Gateway error")
         }
     }
+
+    private fun recordRefundAttempt(
+        refundId: String,
+        paymentId: String,
+        orderId: String,
+        amount: Double,
+        succeeded: Boolean,
+        error: String?
+    ) {
+        val now = nowProvider()
+        refundAttempts.compute(refundId) { _, existing ->
+            RefundAttempt(
+                refundId = refundId,
+                paymentId = paymentId,
+                orderId = orderId,
+                amount = amount,
+                status = if (succeeded) RefundAttemptStatus.SUCCEEDED else RefundAttemptStatus.FAILED,
+                attempts = (existing?.attempts ?: 0) + 1,
+                lastError = error,
+                requestedAt = existing?.requestedAt ?: now,
+                resolvedAt = if (succeeded) now else null
+            )
+        }
+    }
+
+    /** Refund attempts that failed at the gateway and have not since succeeded on a retry with the same refundId. */
+    fun listUnresolvedRefunds(): List<RefundAttempt> =
+        refundAttempts.values.filter { it.status == RefundAttemptStatus.FAILED }
 
     private fun hmacSha256Hex(secret: String, message: String): String {
         val mac = Mac.getInstance("HmacSHA256")

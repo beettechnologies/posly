@@ -87,6 +87,7 @@ data class PaymentRecordResponse(
 
 @Serializable
 data class RefundRecordResponse(
+    val refundId: String,
     val amount: Double,
     val reason: String?,
     val refundedBy: String?,
@@ -116,7 +117,7 @@ data class ConfirmPaymentRequest(
 )
 
 @Serializable
-data class RefundRequest(val reason: String? = null)
+data class RefundRequest(val refundId: String, val reason: String? = null)
 
 @Serializable
 data class OrderEventResponse(
@@ -173,6 +174,7 @@ fun PaymentRecord.toResponse() = PaymentRecordResponse(
 )
 
 fun RefundRecord.toResponse() = RefundRecordResponse(
+    refundId = refundId,
     amount = amount,
     reason = reason,
     refundedBy = refundedBy,

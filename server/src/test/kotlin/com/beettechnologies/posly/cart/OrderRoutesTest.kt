@@ -154,12 +154,90 @@ class OrderRoutesTest {
         val resp = client.post("/orders/$orderId/refund") {
             header(HttpHeaders.Authorization, "Bearer $adminTok")
             contentType(ContentType.Application.Json)
-            setBody("""{"reason":"Customer request"}""")
+            setBody("""{"refundId":"refund-1","reason":"Customer request"}""")
         }
         assertEquals(HttpStatusCode.OK, resp.status)
         val body = Json.parseToJsonElement(resp.bodyAsText()).jsonObject
         assertEquals("REFUNDED", body["status"]?.jsonPrimitive?.content)
         assertEquals("Customer request", body["refund"]?.jsonObject?.get("reason")?.jsonPrimitive?.content)
+        assertEquals("refund-1", body["refund"]?.jsonObject?.get("refundId")?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `refunding twice with the same refundId replays the original result`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val adminTok = accessToken(client, "admin", "admin123")
+        val cashierTok = accessToken(client, "cashier", "cashier123")
+        val orderId = seedPendingOrder(client, adminTok, cashierTok)
+        client.post("/orders/$orderId/payments") {
+            header(HttpHeaders.Authorization, "Bearer $cashierTok")
+            contentType(ContentType.Application.Json)
+            setBody("""{"method":"CARD","amount":10.0}""")
+        }
+
+        val firstResp = client.post("/orders/$orderId/refund") {
+            header(HttpHeaders.Authorization, "Bearer $adminTok")
+            contentType(ContentType.Application.Json)
+            setBody("""{"refundId":"retry-refund-1"}""")
+        }
+        val secondResp = client.post("/orders/$orderId/refund") {
+            header(HttpHeaders.Authorization, "Bearer $adminTok")
+            contentType(ContentType.Application.Json)
+            setBody("""{"refundId":"retry-refund-1"}""")
+        }
+
+        assertEquals(HttpStatusCode.OK, firstResp.status)
+        assertEquals(HttpStatusCode.OK, secondResp.status)
+        assertEquals(firstResp.bodyAsText(), secondResp.bodyAsText())
+
+        val eventsResp = client.get("/orders/$orderId/events") {
+            header(HttpHeaders.Authorization, "Bearer $adminTok")
+        }
+        val types = Json.parseToJsonElement(eventsResp.bodyAsText()).jsonArray.map { it.jsonObject["type"]?.jsonPrimitive?.content }
+        assertEquals(listOf("CREATED", "PAYMENT_CONFIRMED", "REFUNDED"), types, "a replayed refund must not double up the audit trail")
+    }
+
+    @Test
+    fun `refunding an already-refunded order with a different refundId is rejected`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val adminTok = accessToken(client, "admin", "admin123")
+        val cashierTok = accessToken(client, "cashier", "cashier123")
+        val orderId = seedPendingOrder(client, adminTok, cashierTok)
+        client.post("/orders/$orderId/payments") {
+            header(HttpHeaders.Authorization, "Bearer $cashierTok")
+            contentType(ContentType.Application.Json)
+            setBody("""{"method":"CARD","amount":10.0}""")
+        }
+        client.post("/orders/$orderId/refund") {
+            header(HttpHeaders.Authorization, "Bearer $adminTok")
+            contentType(ContentType.Application.Json)
+            setBody("""{"refundId":"refund-1"}""")
+        }
+
+        val resp = client.post("/orders/$orderId/refund") {
+            header(HttpHeaders.Authorization, "Bearer $adminTok")
+            contentType(ContentType.Application.Json)
+            setBody("""{"refundId":"refund-2"}""")
+        }
+        assertEquals(HttpStatusCode.Conflict, resp.status)
+    }
+
+    @Test
+    fun `refunding without a refundId is rejected`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val adminTok = accessToken(client, "admin", "admin123")
+        val cashierTok = accessToken(client, "cashier", "cashier123")
+        val orderId = seedPendingOrder(client, adminTok, cashierTok)
+
+        val resp = client.post("/orders/$orderId/refund") {
+            header(HttpHeaders.Authorization, "Bearer $adminTok")
+            contentType(ContentType.Application.Json)
+            setBody("""{}""")
+        }
+        assertEquals(HttpStatusCode.BadRequest, resp.status)
     }
 
     @Test
@@ -173,7 +251,7 @@ class OrderRoutesTest {
         val resp = client.post("/orders/$orderId/refund") {
             header(HttpHeaders.Authorization, "Bearer $adminTok")
             contentType(ContentType.Application.Json)
-            setBody("""{}""")
+            setBody("""{"refundId":"refund-1"}""")
         }
         assertEquals(HttpStatusCode.Conflict, resp.status)
     }
@@ -214,7 +292,7 @@ class OrderRoutesTest {
         client.post("/orders/$orderId/refund") {
             header(HttpHeaders.Authorization, "Bearer $adminTok")
             contentType(ContentType.Application.Json)
-            setBody("""{}""")
+            setBody("""{"refundId":"refund-1"}""")
         }
 
         val resp = client.get("/orders/$orderId/events") {

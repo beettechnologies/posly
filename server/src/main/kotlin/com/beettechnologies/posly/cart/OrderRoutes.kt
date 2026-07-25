@@ -83,14 +83,22 @@ fun Application.configureOrderRoutes(orderService: OrderService) {
                             call.respond(HttpStatusCode.BadRequest, ErrorResponse("Invalid request body"))
                             return@post
                         }
+                        if (request.refundId.isBlank()) {
+                            call.respond(HttpStatusCode.BadRequest, ErrorResponse("refundId is required"))
+                            return@post
+                        }
 
                         val actorId = call.tokenClaims()?.userId
-                        when (val result = orderService.refund(id, request.reason, actorId)) {
+                        when (val result = orderService.refund(id, request.refundId, request.reason, actorId)) {
                             is RefundResult.Success -> call.respond(HttpStatusCode.OK, result.order.toResponse())
                             RefundResult.OrderNotFound -> call.respond(HttpStatusCode.NotFound, ErrorResponse("Order not found"))
                             RefundResult.NotPaid -> call.respond(
                                 HttpStatusCode.Conflict,
                                 ErrorResponse("Only a paid order can be refunded")
+                            )
+                            RefundResult.AlreadyRefunded -> call.respond(
+                                HttpStatusCode.Conflict,
+                                ErrorResponse("Order has already been refunded with a different refundId")
                             )
                         }
                     }

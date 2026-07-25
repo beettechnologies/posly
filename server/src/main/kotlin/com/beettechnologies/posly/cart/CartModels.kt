@@ -116,6 +116,7 @@ data class PaymentRecord(
 )
 
 data class RefundRecord(
+    val refundId: String,
     val amount: Double,
     val reason: String?,
     val refundedBy: String?,

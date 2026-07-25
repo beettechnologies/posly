@@ -18,10 +18,28 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 private const val WEBHOOK_SECRET = "test-webhook-secret"
 private val FAST_RETRY = RetryPolicy(maxAttempts = 3, initialDelayMillis = 1, backoffFactor = 1.0)
+
+/** Always succeeds at creating a payment but permanently (non-transiently) fails to refund it. */
+private class AlwaysFailingRefundGateway : PaymentGateway {
+    override suspend fun createPayment(orderId: String, amount: Double, currency: String): String = "term_test"
+    override suspend fun refund(terminalTransactionId: String, amount: Double, refundId: String): String =
+        throw GatewayException("Simulated persistent refund failure")
+}
+
+/** Fails to refund until [shouldFail] is flipped off, so a test can simulate "the gateway recovered on retry". */
+private class FlakyRefundGateway : PaymentGateway {
+    var shouldFail = true
+    override suspend fun createPayment(orderId: String, amount: Double, currency: String): String = "term_test"
+    override suspend fun refund(terminalTransactionId: String, amount: Double, refundId: String): String {
+        if (shouldFail) throw GatewayException("Simulated persistent refund failure")
+        return "refund_test"
+    }
+}
 
 private fun hmac(secret: String, message: String): String {
     val mac = Mac.getInstance("HmacSHA256")
@@ -252,5 +270,62 @@ class PaymentGatewayServiceTest {
         delay(50)
 
         assertEquals(GatewayPaymentStatus.INITIATED, service.getPayment(payment.id)?.status)
+    }
+
+    @Test
+    fun `a persistently failing gateway refund is recorded as an unresolved attempt`() = runBlocking {
+        val (service, orderService) = newService(gateway = AlwaysFailingRefundGateway())
+        val order = seedOrder(orderService)
+        val payment = (service.createPayment(order.id, 10.0, "USD") as CreatePaymentResult.Success).payment
+        service.handleWebhook("evt-1", payment.terminalTransactionId, approved = true, declineReason = null)
+
+        val result = service.refund(payment.id, "refund-1", 10.0)
+
+        assertIs<RefundPaymentResult.GatewayError>(result)
+        val unresolved = service.listUnresolvedRefunds()
+        assertEquals(1, unresolved.size)
+        val attempt = unresolved.single()
+        assertEquals("refund-1", attempt.refundId)
+        assertEquals(payment.id, attempt.paymentId)
+        assertEquals(order.id, attempt.orderId)
+        assertEquals(RefundAttemptStatus.FAILED, attempt.status)
+        assertEquals(1, attempt.attempts)
+        assertTrue(attempt.lastError!!.isNotBlank())
+        assertNull(attempt.resolvedAt)
+
+        // The payment itself is untouched by the failed attempt - still approved, not refunded.
+        assertEquals(GatewayPaymentStatus.APPROVED, service.getPayment(payment.id)?.status)
+        assertEquals(OrderStatus.PAID, orderService.getOrder(order.id)?.status)
+    }
+
+    @Test
+    fun `retrying a failed refund with the same refundId resolves it once the gateway succeeds`() = runBlocking {
+        val gateway = FlakyRefundGateway()
+        val (service, orderService) = newService(gateway = gateway)
+        val order = seedOrder(orderService)
+        val payment = (service.createPayment(order.id, 10.0, "USD") as CreatePaymentResult.Success).payment
+        service.handleWebhook("evt-1", payment.terminalTransactionId, approved = true, declineReason = null)
+
+        assertIs<RefundPaymentResult.GatewayError>(service.refund(payment.id, "refund-1", 10.0))
+        assertEquals(1, service.listUnresolvedRefunds().size)
+
+        gateway.shouldFail = false
+        val retryResult = assertIs<RefundPaymentResult.Success>(service.refund(payment.id, "refund-1", 10.0))
+
+        assertTrue(service.listUnresolvedRefunds().isEmpty(), "a since-succeeded retry must no longer be unresolved")
+        assertEquals(GatewayPaymentStatus.REFUNDED, retryResult.payment.status)
+        assertEquals(OrderStatus.REFUNDED, orderService.getOrder(order.id)?.status)
+    }
+
+    @Test
+    fun `a successful refund is not recorded as unresolved`() = runBlocking {
+        val (service, orderService) = newService()
+        val order = seedOrder(orderService)
+        val payment = (service.createPayment(order.id, 10.0, "USD") as CreatePaymentResult.Success).payment
+        service.handleWebhook("evt-1", payment.terminalTransactionId, approved = true, declineReason = null)
+
+        service.refund(payment.id, "refund-1", 10.0)
+
+        assertTrue(service.listUnresolvedRefunds().isEmpty())
     }
 }

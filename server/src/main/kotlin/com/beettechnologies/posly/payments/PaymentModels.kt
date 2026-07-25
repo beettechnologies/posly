@@ -23,3 +23,24 @@ data class GatewayPayment(
     val refundId: String? = null,
     val refundedAmount: Double? = null
 )
+
+enum class RefundAttemptStatus { SUCCEEDED, FAILED }
+
+/**
+ * A finance-facing audit trail of every refund attempt against the gateway, keyed by [refundId] -
+ * separate from [GatewayPayment] because a failed attempt (see [PaymentGatewayService.refund])
+ * leaves the payment itself untouched, with nothing else recording that the attempt ever happened.
+ * A retry with the same [refundId] updates this same record in place (e.g. FAILED -> SUCCEEDED),
+ * incrementing [attempts]; reconciliation surfaces whatever is still [RefundAttemptStatus.FAILED].
+ */
+data class RefundAttempt(
+    val refundId: String,
+    val paymentId: String,
+    val orderId: String,
+    val amount: Double,
+    val status: RefundAttemptStatus,
+    val attempts: Int,
+    val lastError: String?,
+    val requestedAt: Instant,
+    val resolvedAt: Instant?
+)

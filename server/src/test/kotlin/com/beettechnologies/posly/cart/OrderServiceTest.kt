@@ -98,10 +98,12 @@ class OrderServiceTest {
         val order = service.createOrder(seedCart(), seedTotals(), "key-1")
         service.confirmPayment(order.id, "CARD", 10.0, null, "cashier-1")
 
-        val result = service.refund(order.id, reason = "Customer changed their mind", actorId = "manager-1")
+        val result = service.refund(order.id, "refund-1", reason = "Customer changed their mind", actorId = "manager-1")
 
         val success = assertIs<RefundResult.Success>(result)
+        assertEquals(false, success.replayed)
         assertEquals(OrderStatus.REFUNDED, success.order.status)
+        assertEquals("refund-1", success.order.refund?.refundId)
         assertEquals(10.0, success.order.refund?.amount)
         assertEquals("Customer changed their mind", success.order.refund?.reason)
         assertEquals("manager-1", success.order.refund?.refundedBy)
@@ -118,27 +120,46 @@ class OrderServiceTest {
         val service = OrderService()
         val order = service.createOrder(seedCart(), seedTotals(), "key-1")
 
-        val result = service.refund(order.id, null, "manager-1")
+        val result = service.refund(order.id, "refund-1", null, "manager-1")
 
         assertEquals(RefundResult.NotPaid, result)
     }
 
     @Test
-    fun `refunding an already-refunded order is rejected`() {
+    fun `refunding twice with the same refundId replays the original result instead of refunding twice`() {
         val service = OrderService()
         val order = service.createOrder(seedCart(), seedTotals(), "key-1")
         service.confirmPayment(order.id, "CARD", 10.0, null, "cashier-1")
-        service.refund(order.id, null, "manager-1")
 
-        val result = service.refund(order.id, null, "manager-1")
+        val first = assertIs<RefundResult.Success>(service.refund(order.id, "refund-1", null, "manager-1"))
+        val second = assertIs<RefundResult.Success>(service.refund(order.id, "refund-1", null, "manager-1"))
 
-        assertEquals(RefundResult.NotPaid, result)
+        assertEquals(false, first.replayed)
+        assertEquals(true, second.replayed)
+        assertEquals(first.order, second.order)
+        assertEquals(
+            listOf(OrderEventType.CREATED, OrderEventType.PAYMENT_CONFIRMED, OrderEventType.REFUNDED),
+            service.listEvents(order.id).map { it.type },
+            "a replayed refund must not record a second REFUNDED event"
+        )
+    }
+
+    @Test
+    fun `refunding an already-refunded order with a different refundId is rejected`() {
+        val service = OrderService()
+        val order = service.createOrder(seedCart(), seedTotals(), "key-1")
+        service.confirmPayment(order.id, "CARD", 10.0, null, "cashier-1")
+        service.refund(order.id, "refund-1", null, "manager-1")
+
+        val result = service.refund(order.id, "refund-2", null, "manager-1")
+
+        assertEquals(RefundResult.AlreadyRefunded, result)
     }
 
     @Test
     fun `refunding an unknown order is rejected`() {
         val service = OrderService()
-        assertEquals(RefundResult.OrderNotFound, service.refund("does-not-exist", null, null))
+        assertEquals(RefundResult.OrderNotFound, service.refund("does-not-exist", "refund-1", null, null))
     }
 
     @Test

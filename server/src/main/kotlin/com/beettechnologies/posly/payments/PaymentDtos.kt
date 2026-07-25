@@ -38,6 +38,31 @@ data class WebhookPayload(
     val declineReason: String? = null
 )
 
+@Serializable
+data class RefundAttemptResponse(
+    val refundId: String,
+    val paymentId: String,
+    val orderId: String,
+    val amount: Double,
+    val status: String,
+    val attempts: Int,
+    val lastError: String?,
+    val requestedAt: String,
+    val resolvedAt: String?
+)
+
+fun RefundAttempt.toResponse() = RefundAttemptResponse(
+    refundId = refundId,
+    paymentId = paymentId,
+    orderId = orderId,
+    amount = amount,
+    status = status.name,
+    attempts = attempts,
+    lastError = lastError,
+    requestedAt = requestedAt.toString(),
+    resolvedAt = resolvedAt?.toString()
+)
+
 fun GatewayPayment.toResponse() = PaymentResponse(
     id = id,
     orderId = orderId,
