@@ -103,6 +103,13 @@ sealed class HeartbeatResult {
     data object Deprovisioned : HeartbeatResult()
 }
 
+/** Shared by any endpoint that authenticates as a device rather than a JWT-bearing user (heartbeat, offline sync). */
+sealed class DeviceAuthResult {
+    data class Success(val device: DeviceRecord) : DeviceAuthResult()
+    data object InvalidCredentials : DeviceAuthResult()
+    data object Deprovisioned : DeviceAuthResult()
+}
+
 sealed class DeprovisionResult {
     data class Success(val device: DeviceRecord) : DeprovisionResult()
     data object NotFound : DeprovisionResult()
@@ -252,18 +259,30 @@ class DeviceRegistryService(
 
     fun recordHeartbeat(clientId: String, clientSecret: String): HeartbeatResult {
         synchronized(lock) {
+            return when (val auth = authenticateDevice(clientId, clientSecret)) {
+                is DeviceAuthResult.Success -> {
+                    val updated = auth.device.copy(lastSeenAt = nowProvider())
+                    devices[updated.id] = updated
+                    HeartbeatResult.Success(updated)
+                }
+                DeviceAuthResult.InvalidCredentials -> HeartbeatResult.InvalidCredentials
+                DeviceAuthResult.Deprovisioned -> HeartbeatResult.Deprovisioned
+            }
+        }
+    }
+
+    /** Constant-time clientId/clientSecret check shared by every device-credential-authenticated endpoint. */
+    fun authenticateDevice(clientId: String, clientSecret: String): DeviceAuthResult {
+        synchronized(lock) {
             val device = devices.values.firstOrNull { it.clientId == clientId }
-                ?: return HeartbeatResult.InvalidCredentials
+                ?: return DeviceAuthResult.InvalidCredentials
             if (!MessageDigest.isEqual(device.clientSecret.toByteArray(), clientSecret.toByteArray())) {
-                return HeartbeatResult.InvalidCredentials
+                return DeviceAuthResult.InvalidCredentials
             }
             if (device.status == DeviceStatus.DEPROVISIONED) {
-                return HeartbeatResult.Deprovisioned
+                return DeviceAuthResult.Deprovisioned
             }
-
-            val updated = device.copy(lastSeenAt = nowProvider())
-            devices[device.id] = updated
-            return HeartbeatResult.Success(updated)
+            return DeviceAuthResult.Success(device)
         }
     }
 

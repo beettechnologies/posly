@@ -77,6 +77,30 @@ class DeviceRegistryServiceTest {
     }
 
     @Test
+    fun `authenticateDevice succeeds for valid credentials and does not touch lastSeenAt`() {
+        val service = DeviceRegistryService()
+        val device = enroll(service)
+
+        val result = service.authenticateDevice(device.clientId, device.clientSecret)
+
+        val success = assertIs<DeviceAuthResult.Success>(result)
+        assertEquals(device.id, success.device.id)
+        assertNull(success.device.lastSeenAt)
+    }
+
+    @Test
+    fun `authenticateDevice rejects wrong secret, unknown client id, and a deprovisioned device`() {
+        val service = DeviceRegistryService()
+        val device = enroll(service)
+        val other = enroll(service)
+        service.deprovisionDevice(other.id, actorId = "admin-1")
+
+        assertEquals(DeviceAuthResult.InvalidCredentials, service.authenticateDevice(device.clientId, "wrong-secret"))
+        assertEquals(DeviceAuthResult.InvalidCredentials, service.authenticateDevice("unknown-client", device.clientSecret))
+        assertEquals(DeviceAuthResult.Deprovisioned, service.authenticateDevice(other.clientId, other.clientSecret))
+    }
+
+    @Test
     fun `deprovisioning a device transitions its status and rejects a second deprovision`() {
         val service = DeviceRegistryService()
         val device = enroll(service)

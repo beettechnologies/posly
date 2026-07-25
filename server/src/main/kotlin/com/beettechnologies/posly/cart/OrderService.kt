@@ -29,7 +29,7 @@ class OrderService(private val nowProvider: () -> Instant = { Instant.now() }) {
     private val orders = ConcurrentHashMap<String, Order>()
     private val events = mutableListOf<OrderEvent>()
 
-    fun createOrder(cart: Cart, totals: CartTotals, idempotencyKey: String): Order {
+    fun createOrder(cart: Cart, totals: CartTotals, idempotencyKey: String, checkedOutAt: Instant = nowProvider()): Order {
         val order = Order(
             cartId = cart.id,
             storeId = cart.storeId,
@@ -38,7 +38,7 @@ class OrderService(private val nowProvider: () -> Instant = { Instant.now() }) {
             discount = cart.discount,
             totals = totals,
             idempotencyKey = idempotencyKey,
-            checkedOutAt = nowProvider(),
+            checkedOutAt = checkedOutAt,
             status = OrderStatus.PENDING
         )
         orders[order.id] = order
@@ -56,7 +56,21 @@ class OrderService(private val nowProvider: () -> Instant = { Instant.now() }) {
 
     fun count(): Int = orders.size
 
-    fun confirmPayment(orderId: String, method: String, amount: Double, reference: String?, actorId: String?): ConfirmPaymentResult {
+    /**
+     * Accepts one tender toward the order's total. A single call for the full remaining balance
+     * behaves exactly as before (PENDING -> PAID). A lesser amount is a partial/split tender: the
+     * order stays PENDING with the payment appended, and further calls are accepted until the
+     * accumulated total covers the order - at which point it flips to PAID. An amount greater than
+     * what's still owed is rejected outright rather than silently overpaying.
+     */
+    fun confirmPayment(
+        orderId: String,
+        method: String,
+        amount: Double,
+        reference: String?,
+        actorId: String?,
+        maskedCardNumber: String? = null
+    ): ConfirmPaymentResult {
         if (amount <= 0) return ConfirmPaymentResult.InvalidAmount("amount must be positive")
 
         var outcome: ConfirmPaymentResult = ConfirmPaymentResult.OrderNotFound
@@ -70,15 +84,27 @@ class OrderService(private val nowProvider: () -> Instant = { Instant.now() }) {
                     outcome = ConfirmPaymentResult.NotPending
                     existing
                 }
+                roundCents(amount) > existing.remainingBalance -> {
+                    outcome = ConfirmPaymentResult.InvalidAmount(
+                        "amount exceeds remaining balance of ${existing.remainingBalance}"
+                    )
+                    existing
+                }
                 else -> {
                     val payment = PaymentRecord(
                         method = method,
                         amount = amount,
                         reference = reference,
                         confirmedBy = actorId,
-                        confirmedAt = nowProvider()
+                        confirmedAt = nowProvider(),
+                        maskedCardNumber = maskedCardNumber
                     )
-                    val updated = existing.copy(status = OrderStatus.PAID, payment = payment)
+                    val withPayment = existing.copy(payments = existing.payments + payment)
+                    val updated = if (withPayment.remainingBalance <= 0.0) {
+                        withPayment.copy(status = OrderStatus.PAID)
+                    } else {
+                        withPayment
+                    }
                     outcome = ConfirmPaymentResult.Success(updated)
                     updated
                 }

@@ -18,15 +18,6 @@ import io.ktor.server.routing.put
 import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
 
-private class InvalidDiscountDtoException(message: String) : Exception(message)
-
-private fun DiscountDto.toDomain(): Discount {
-    val type = runCatching { DiscountType.valueOf(this.type) }.getOrElse {
-        throw InvalidDiscountDtoException("Invalid discount type '${this.type}'")
-    }
-    return Discount(type, value)
-}
-
 fun Application.configureCartRoutes(cartService: CartService) {
     routing {
         authenticate("jwt-auth") {

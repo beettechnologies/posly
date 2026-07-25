@@ -55,6 +55,8 @@ class ProductService {
 
     fun getProduct(id: String): Product? = products[id]
 
+    fun getProductBySku(sku: String): Product? = skuIndex[sku]?.let { products[it] }
+
     fun listProducts(): List<Product> = products.values.toList()
 
     fun updateProduct(id: String, req: UpdateProductRequest): ProductResult {

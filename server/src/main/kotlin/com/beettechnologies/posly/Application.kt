@@ -26,6 +26,8 @@ import com.beettechnologies.posly.stores.StoreService
 import com.beettechnologies.posly.stores.TaxProfileService
 import com.beettechnologies.posly.stores.configureStoreRoutes
 import com.beettechnologies.posly.stores.configureTaxProfileRoutes
+import com.beettechnologies.posly.sync.OfflineSyncService
+import com.beettechnologies.posly.sync.configureSyncRoutes
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.application.*
@@ -67,6 +69,7 @@ fun Application.module() {
         webhookSecret,
         autoResolveScope = this
     )
+    val offlineSyncService = OfflineSyncService(deviceRegistryService, productService, cartService, orderService)
 
     configureObservability()
 
@@ -118,4 +121,5 @@ fun Application.module() {
     configureCartRoutes(cartService)
     configureOrderRoutes(orderService)
     configurePaymentRoutes(paymentGatewayService)
+    configureSyncRoutes(offlineSyncService)
 }
