@@ -6,4 +6,5 @@ import org.koin.dsl.module
 
 val productsModule: Module = module {
     single<ProductSearchApi> { KtorProductSearchApi(get(), defaultBaseUrl) }
+    single<ProductApi> { KtorProductApi(get(), defaultBaseUrl) }
 }

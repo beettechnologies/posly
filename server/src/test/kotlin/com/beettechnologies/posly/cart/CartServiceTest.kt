@@ -185,6 +185,41 @@ class CartServiceTest {
     }
 
     @Test
+    fun `selecting an out-of-stock modifier option is rejected`() {
+        val h = Harness()
+        val storeId = h.seedStore()
+        val productId = h.seedProduct(
+            price = 10.0,
+            modifiers = listOf(
+                ModifierRequest(
+                    name = "Size",
+                    options = listOf("Small", "Large"),
+                    additionalCost = 1.5,
+                    unavailableOptions = listOf("Large")
+                )
+            )
+        )
+        val cart = (h.carts.createCart(storeId, null) as CreateCartResult.Success).cart
+        val modifierId = h.modifierId(productId)
+
+        val rejected = h.carts.addItem(
+            cart.id,
+            productId,
+            quantity = 1,
+            selectedModifiers = listOf(ModifierSelection(modifierId, "Large"))
+        )
+        assertIs<AddItemResult.InvalidModifier>(rejected)
+
+        val accepted = h.carts.addItem(
+            cart.id,
+            productId,
+            quantity = 1,
+            selectedModifiers = listOf(ModifierSelection(modifierId, "Small"))
+        )
+        assertIs<AddItemResult.Success>(accepted)
+    }
+
+    @Test
     fun `adding an item to an unknown cart is rejected`() {
         val h = Harness()
         h.seedStore()

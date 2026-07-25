@@ -25,6 +25,7 @@ data class SaleUiState(
     val suggestions: List<SearchResultItem> = emptyList(),
     val isSearching: Boolean = false,
     val showNoResults: Boolean = false,
+    val selectedProductId: String? = null,
     val infoMessage: String? = null,
     val errorMessage: String? = null
 )
@@ -132,9 +133,25 @@ class SaleViewModel(
         }
     }
 
+    /** Opens the product detail/modifiers modal rather than adding directly, so the cashier can review and pick modifiers first. */
     fun onSuggestionSelected(item: SearchResultItem) {
         searchJob?.cancel()
-        viewModelScope.launch { addToCart(item) }
+        _uiState.value = _uiState.value.copy(selectedProductId = item.id)
+    }
+
+    fun dismissProductDetail() {
+        _uiState.value = _uiState.value.copy(selectedProductId = null)
+    }
+
+    /** Called once the product detail modal has added its item to the cart. */
+    fun onProductAdded(cart: CartResponse) {
+        _uiState.value = _uiState.value.copy(
+            cart = cart,
+            selectedProductId = null,
+            searchQuery = "",
+            suggestions = emptyList(),
+            showNoResults = false
+        )
     }
 
     private suspend fun addToCart(item: SearchResultItem) {

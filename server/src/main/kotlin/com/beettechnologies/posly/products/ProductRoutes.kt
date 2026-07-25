@@ -166,7 +166,8 @@ private fun Product.toResponse() = ProductResponse(
             id = m.id,
             name = m.name,
             options = m.options,
-            additionalCost = m.additionalCost
+            additionalCost = m.additionalCost,
+            unavailableOptions = m.unavailableOptions
         )
     },
     imageUrls = imageUrls,

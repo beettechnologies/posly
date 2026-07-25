@@ -31,7 +31,7 @@ class ProductService {
         }
 
         val modifiers = req.modifiers.map { m ->
-            ProductModifier(name = m.name, options = m.options, additionalCost = m.additionalCost)
+            ProductModifier(name = m.name, options = m.options, additionalCost = m.additionalCost, unavailableOptions = m.unavailableOptions)
         }
 
         val product = Product(
@@ -69,7 +69,7 @@ class ProductService {
 
         val modifiers = if (req.modifiers != null) {
             req.modifiers.map { m ->
-                ProductModifier(name = m.name, options = m.options, additionalCost = m.additionalCost)
+                ProductModifier(name = m.name, options = m.options, additionalCost = m.additionalCost, unavailableOptions = m.unavailableOptions)
             }
         } else {
             existing.modifiers

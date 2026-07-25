@@ -6,7 +6,8 @@ import kotlinx.serialization.Serializable
 data class ModifierRequest(
     val name: String,
     val options: List<String>,
-    val additionalCost: Double = 0.0
+    val additionalCost: Double = 0.0,
+    val unavailableOptions: List<String> = emptyList()
 )
 
 @Serializable
@@ -40,7 +41,8 @@ data class ModifierResponse(
     val id: String,
     val name: String,
     val options: List<String>,
-    val additionalCost: Double
+    val additionalCost: Double,
+    val unavailableOptions: List<String> = emptyList()
 )
 
 @Serializable

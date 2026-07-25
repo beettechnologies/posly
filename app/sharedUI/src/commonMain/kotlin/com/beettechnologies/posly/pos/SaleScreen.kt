@@ -163,6 +163,16 @@ fun SaleScreen(
             }
         }
     }
+
+    val selectedProductId = uiState.selectedProductId
+    if (selectedProductId != null) {
+        ProductDetailModal(
+            productId = selectedProductId,
+            cartId = uiState.cart?.id,
+            onDismiss = viewModel::dismissProductDetail,
+            onAddedToCart = viewModel::onProductAdded
+        )
+    }
 }
 
 @Composable

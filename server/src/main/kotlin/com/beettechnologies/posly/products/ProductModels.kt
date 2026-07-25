@@ -10,7 +10,8 @@ data class ProductModifier(
     val id: String = UUID.randomUUID().toString(),
     val name: String,
     val options: List<String>,
-    val additionalCost: Double = 0.0
+    val additionalCost: Double = 0.0,
+    val unavailableOptions: List<String> = emptyList()
 )
 
 data class Product(

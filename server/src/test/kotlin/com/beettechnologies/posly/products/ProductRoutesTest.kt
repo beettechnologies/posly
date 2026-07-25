@@ -81,6 +81,31 @@ class ProductRoutesTest {
     }
 
     @Test
+    fun `unavailable modifier options round-trip through create and fetch`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val token = managerToken(client)
+
+        val createResp = client.post("/products") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+            contentType(ContentType.Application.Json)
+            setBody(
+                """{"sku":"PROD-003","name":"Coffee Mug","price":9.99,"taxCategory":"STANDARD",
+                   |"modifiers":[{"name":"Size","options":["S","M","L"],"additionalCost":0.5,"unavailableOptions":["L"]}]}""".trimMargin()
+            )
+        }
+        assertEquals(HttpStatusCode.Created, createResp.status)
+        val id = Json.parseToJsonElement(createResp.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
+
+        val getResp = client.get("/products/$id") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+        }
+        val modifier = Json.parseToJsonElement(getResp.bodyAsText()).jsonObject["modifiers"]!!.jsonArray.single().jsonObject
+        val unavailable = modifier["unavailableOptions"]!!.jsonArray.map { it.jsonPrimitive.content }
+        assertEquals(listOf("L"), unavailable)
+    }
+
+    @Test
     fun `create product persists SKU and can be fetched by id`() = testApplication {
         configureApp()
         val client = jsonClient()

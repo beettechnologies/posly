@@ -97,6 +97,11 @@ class CartService(
             if (selection.option !in modifier.options) {
                 return AddItemResult.InvalidModifier("Option '${selection.option}' is not valid for modifier ${modifier.name}")
             }
+            if (selection.option in modifier.unavailableOptions) {
+                return AddItemResult.InvalidModifier(
+                    "Option '${selection.option}' for modifier ${modifier.name} is out of stock"
+                )
+            }
             resolvedModifiers += SelectedModifier(modifier.id, selection.option, modifier.additionalCost)
         }
 

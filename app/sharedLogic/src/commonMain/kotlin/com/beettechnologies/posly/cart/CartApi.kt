@@ -33,7 +33,12 @@ sealed class AddCartItemOutcome {
 interface CartApi {
     suspend fun createCart(storeId: String): CreateCartOutcome
     suspend fun getCart(id: String): GetCartOutcome
-    suspend fun addItem(cartId: String, productId: String, quantity: Int): AddCartItemOutcome
+    suspend fun addItem(
+        cartId: String,
+        productId: String,
+        quantity: Int,
+        selectedModifiers: List<SelectedModifierRequest> = emptyList()
+    ): AddCartItemOutcome
 }
 
 class KtorCartApi(
@@ -73,10 +78,15 @@ class KtorCartApi(
         GetCartOutcome.NetworkError(e.message ?: "Network error")
     }
 
-    override suspend fun addItem(cartId: String, productId: String, quantity: Int): AddCartItemOutcome = try {
+    override suspend fun addItem(
+        cartId: String,
+        productId: String,
+        quantity: Int,
+        selectedModifiers: List<SelectedModifierRequest>
+    ): AddCartItemOutcome = try {
         val response = httpClient.post("$baseUrl/carts/$cartId/items") {
             contentType(ContentType.Application.Json)
-            setBody(AddCartItemRequest(productId = productId, quantity = quantity))
+            setBody(AddCartItemRequest(productId = productId, quantity = quantity, selectedModifiers = selectedModifiers))
         }
         when (response.status) {
             HttpStatusCode.OK -> AddCartItemOutcome.Success(response.body())

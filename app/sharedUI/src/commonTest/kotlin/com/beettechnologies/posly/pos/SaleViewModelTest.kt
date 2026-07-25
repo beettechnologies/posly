@@ -8,6 +8,7 @@ import com.beettechnologies.posly.cart.CartSessionStore
 import com.beettechnologies.posly.cart.CartTotalsResponse
 import com.beettechnologies.posly.cart.CreateCartOutcome
 import com.beettechnologies.posly.cart.GetCartOutcome
+import com.beettechnologies.posly.cart.SelectedModifierRequest
 import com.beettechnologies.posly.devices.DeviceCredentials
 import com.beettechnologies.posly.devices.DeviceCredentialsStore
 import com.beettechnologies.posly.products.ProductSearchApi
@@ -77,7 +78,12 @@ private class FakeCartApi(
 
     override suspend fun getCart(id: String): GetCartOutcome = getCartOutcome ?: GetCartOutcome.Success(currentCart)
 
-    override suspend fun addItem(cartId: String, productId: String, quantity: Int): AddCartItemOutcome {
+    override suspend fun addItem(
+        cartId: String,
+        productId: String,
+        quantity: Int,
+        selectedModifiers: List<SelectedModifierRequest>
+    ): AddCartItemOutcome {
         val newItem = CartItemResponse(
             id = "item-${currentCart.items.size + 1}",
             productId = productId,
@@ -170,7 +176,7 @@ class SaleViewModelTest {
     }
 
     @Test
-    fun `selecting a suggestion adds it to the cart and clears the search field`() = runTest(dispatcher) {
+    fun `selecting a suggestion opens the product detail modal instead of adding directly`() = runTest(dispatcher) {
         val searchApi = FakeProductSearchApi(resultsByQuery = mapOf("widget" to listOf(product("p1", "Widget"))))
         val cartApi = FakeCartApi()
         val viewModel = SaleViewModel(FakeDeviceCredentialsStore(), FakeCartSessionStore(), cartApi, searchApi, debounceMillis = 300L)
@@ -181,12 +187,39 @@ class SaleViewModelTest {
 
         val suggestion = viewModel.uiState.value.suggestions.single()
         viewModel.onSuggestionSelected(suggestion)
-        advanceUntilIdle()
 
         val state = viewModel.uiState.value
-        assertEquals(1, state.cart?.items?.size)
+        assertEquals("p1", state.selectedProductId)
+        assertTrue(state.cart?.items.orEmpty().isEmpty(), "the suggestion should not be added to the cart directly")
+    }
+
+    @Test
+    fun `dismissing the product detail modal clears the selected product`() = runTest(dispatcher) {
+        val viewModel = SaleViewModel(FakeDeviceCredentialsStore(), FakeCartSessionStore(), FakeCartApi(), FakeProductSearchApi())
+        advanceUntilIdle()
+
+        viewModel.onSuggestionSelected(product("p1", "Widget"))
+        assertEquals("p1", viewModel.uiState.value.selectedProductId)
+
+        viewModel.dismissProductDetail()
+        assertEquals(null, viewModel.uiState.value.selectedProductId)
+    }
+
+    @Test
+    fun `a product added from the modal updates the cart and closes the modal`() = runTest(dispatcher) {
+        val cartApi = FakeCartApi()
+        val viewModel = SaleViewModel(FakeDeviceCredentialsStore(), FakeCartSessionStore(), cartApi, FakeProductSearchApi())
+        advanceUntilIdle()
+        viewModel.onSuggestionSelected(product("p1", "Widget"))
+        viewModel.onQueryChange("widget")
+
+        val updatedCart = cart(items = listOf())
+        viewModel.onProductAdded(updatedCart)
+
+        val state = viewModel.uiState.value
+        assertEquals(null, state.selectedProductId)
+        assertEquals(updatedCart, state.cart)
         assertEquals("", state.searchQuery)
-        assertTrue(state.suggestions.isEmpty())
     }
 
     @Test
