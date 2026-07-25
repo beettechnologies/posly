@@ -1,5 +1,6 @@
 package com.beettechnologies.posly.stores
 
+import java.math.RoundingMode
 import java.util.UUID
 
 data class Address(
@@ -22,15 +23,23 @@ data class Store(
     val updatedAt: Long = System.currentTimeMillis()
 )
 
+enum class PricingMode { INCLUSIVE, EXCLUSIVE }
+
 data class TaxRate(
     val name: String,
-    val ratePercent: Double
+    val ratePercent: Double,
+    /** Rates are applied (and displayed) in ascending order; ties keep their original list position. */
+    val order: Int = 0,
+    /** If true, this rate taxes the running total after every lower-order rate's already-rounded tax - true tax-on-tax stacking (e.g. GST then PST on the GST-inclusive amount) rather than each rate taxing the same original base independently. */
+    val compoundsOnPrior: Boolean = false
 )
 
 data class TaxProfile(
     val id: String = UUID.randomUUID().toString(),
     val name: String,
     val rates: List<TaxRate>,
+    val pricingMode: PricingMode = PricingMode.EXCLUSIVE,
+    val roundingMode: RoundingMode = RoundingMode.HALF_UP,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 )

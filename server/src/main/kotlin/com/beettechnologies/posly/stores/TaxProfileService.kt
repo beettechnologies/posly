@@ -1,7 +1,7 @@
 package com.beettechnologies.posly.stores
 
+import java.math.RoundingMode
 import java.util.concurrent.ConcurrentHashMap
-import kotlin.math.round
 
 sealed class UpdateTaxProfileResult {
     data class Updated(val profile: TaxProfile) : UpdateTaxProfileResult()
@@ -22,8 +22,13 @@ class TaxProfileService {
 
     private val profiles = ConcurrentHashMap<String, TaxProfile>()
 
-    fun createProfile(name: String, rates: List<TaxRate>): TaxProfile {
-        val profile = TaxProfile(name = name, rates = rates)
+    fun createProfile(
+        name: String,
+        rates: List<TaxRate>,
+        pricingMode: PricingMode = PricingMode.EXCLUSIVE,
+        roundingMode: RoundingMode = RoundingMode.HALF_UP
+    ): TaxProfile {
+        val profile = TaxProfile(name = name, rates = rates, pricingMode = pricingMode, roundingMode = roundingMode)
         profiles[profile.id] = profile
         return profile
     }
@@ -32,11 +37,19 @@ class TaxProfileService {
 
     fun listProfiles(): List<TaxProfile> = profiles.values.toList()
 
-    fun updateProfile(id: String, name: String?, rates: List<TaxRate>?): UpdateTaxProfileResult {
+    fun updateProfile(
+        id: String,
+        name: String?,
+        rates: List<TaxRate>?,
+        pricingMode: PricingMode? = null,
+        roundingMode: RoundingMode? = null
+    ): UpdateTaxProfileResult {
         val existing = profiles[id] ?: return UpdateTaxProfileResult.NotFound
         val updated = existing.copy(
             name = name ?: existing.name,
             rates = rates ?: existing.rates,
+            pricingMode = pricingMode ?: existing.pricingMode,
+            roundingMode = roundingMode ?: existing.roundingMode,
             updatedAt = System.currentTimeMillis()
         )
         profiles[id] = updated
@@ -47,21 +60,12 @@ class TaxProfileService {
 
     fun calculateTax(taxProfileId: String, amount: Double): CalculateTaxResult {
         val profile = profiles[taxProfileId] ?: return CalculateTaxResult.ProfileNotFound
-        val breakdown = profile.rates.map { rate ->
-            TaxBreakdownItem(
-                name = rate.name,
-                ratePercent = rate.ratePercent,
-                amount = roundCents(amount * rate.ratePercent / 100.0)
-            )
-        }
-        val totalTax = roundCents(breakdown.sumOf { it.amount })
+        val result = TaxEngine.calculate(profile, amount)
         return CalculateTaxResult.Success(
-            subtotal = roundCents(amount),
-            breakdown = breakdown,
-            totalTax = totalTax,
-            total = roundCents(amount + totalTax)
+            subtotal = result.subtotal,
+            breakdown = result.breakdown.map { TaxBreakdownItem(it.name, it.ratePercent, it.amount) },
+            totalTax = result.totalTax,
+            total = result.total
         )
     }
-
-    private fun roundCents(value: Double): Double = round(value * 100.0) / 100.0
 }

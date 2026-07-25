@@ -26,6 +26,7 @@ import com.beettechnologies.posly.stores.StoreService
 import com.beettechnologies.posly.stores.TaxProfileService
 import com.beettechnologies.posly.stores.configureStoreRoutes
 import com.beettechnologies.posly.stores.configureTaxProfileRoutes
+import com.beettechnologies.posly.stores.configureTaxRoutes
 import com.beettechnologies.posly.sync.OfflineSyncService
 import com.beettechnologies.posly.sync.configureSyncRoutes
 import io.ktor.http.*
@@ -117,6 +118,7 @@ fun Application.module() {
     configureSearchRoutes(productService)
     configureStoreRoutes(storeService)
     configureTaxProfileRoutes(taxProfileService)
+    configureTaxRoutes(taxProfileService)
     configureInventoryRoutes(inventoryService)
     configureCartRoutes(cartService)
     configureOrderRoutes(orderService)

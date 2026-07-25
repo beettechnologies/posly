@@ -20,6 +20,8 @@ import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.double
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
@@ -56,14 +58,24 @@ class CartRoutesTest {
 
     private suspend fun cashierToken(client: HttpClient) = accessToken(client, "cashier", "cashier123")
 
-    private suspend fun seedStoreId(client: HttpClient, token: String): String {
+    private suspend fun seedStoreId(client: HttpClient, token: String, taxProfileId: String? = null): String {
+        val taxProfileJson = taxProfileId?.let { ""","taxProfileId":"$it"""" } ?: ""
         val resp = client.post("/stores") {
             header(HttpHeaders.Authorization, "Bearer $token")
             contentType(ContentType.Application.Json)
             setBody(
                 """{"name":"Downtown","address":{"line1":"1 Main St","city":"NY","postalCode":"10001","country":"US"},
-                    |"timezone":"America/New_York","currency":"USD"}""".trimMargin()
+                    |"timezone":"America/New_York","currency":"USD"$taxProfileJson}""".trimMargin()
             )
+        }
+        return Json.parseToJsonElement(resp.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
+    }
+
+    private suspend fun seedTaxProfileId(client: HttpClient, token: String, body: String): String {
+        val resp = client.post("/tax-profiles") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+            contentType(ContentType.Application.Json)
+            setBody(body)
         }
         return Json.parseToJsonElement(resp.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
     }
@@ -377,5 +389,42 @@ class CartRoutesTest {
             header(HttpHeaders.Authorization, "Bearer $cashierTok")
         }
         assertEquals(HttpStatusCode.NotFound, resp.status)
+    }
+
+    @Test
+    fun `a store with a composite compounding tax profile produces the engine's exact totals on real checkout`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val adminTok = accessToken(client, "admin", "admin123")
+        val taxProfileId = seedTaxProfileId(
+            client, adminTok,
+            """{"name":"Compound","rates":[{"name":"GST","ratePercent":5.0,"order":1,"compoundsOnPrior":false},
+                |{"name":"PST","ratePercent":7.0,"order":2,"compoundsOnPrior":true}]}""".trimMargin()
+        )
+        val storeId = seedStoreId(client, adminTok, taxProfileId = taxProfileId)
+        val productId = seedProductId(client, adminTok, price = 200.0)
+        val cashierTok = cashierToken(client)
+        val cartId = createCart(client, cashierTok, storeId)
+        client.post("/carts/$cartId/items") {
+            header(HttpHeaders.Authorization, "Bearer $cashierTok")
+            contentType(ContentType.Application.Json)
+            setBody("""{"productId":"$productId","quantity":1}""")
+        }
+
+        val checkoutResp = client.post("/carts/$cartId/checkout") {
+            header(HttpHeaders.Authorization, "Bearer $cashierTok")
+            contentType(ContentType.Application.Json)
+            setBody("""{"idempotencyKey":"compound-tax-order"}""")
+        }
+        assertEquals(HttpStatusCode.Created, checkoutResp.status)
+        val order = Json.parseToJsonElement(checkoutResp.bodyAsText()).jsonObject
+        val totals = order["totals"]!!.jsonObject
+
+        // GST taxes the 200 base (10.0); PST (compounding) taxes 200 + 10 = 210 at 7% (14.7).
+        assertEquals(24.7, totals["totalTax"]?.jsonPrimitive?.double)
+        assertEquals(224.7, totals["total"]?.jsonPrimitive?.double)
+        val breakdown = totals["taxBreakdown"]!!.jsonArray
+        assertEquals(10.0, breakdown[0].jsonObject["amount"]?.jsonPrimitive?.double)
+        assertEquals(14.7, breakdown[1].jsonObject["amount"]?.jsonPrimitive?.double)
     }
 }

@@ -173,4 +173,119 @@ class TaxProfileRoutesTest {
         }
         assertEquals(HttpStatusCode.NotFound, resp.status)
     }
+
+    @Test
+    fun `creating a profile with composite rate ordering, inclusive pricing and a rounding mode round-trips through the response`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val token = adminToken(client)
+
+        val resp = client.post("/tax-profiles") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+            contentType(ContentType.Application.Json)
+            setBody(
+                """{"name":"Compound VAT","pricingMode":"INCLUSIVE","roundingMode":"HALF_EVEN",
+                    |"rates":[{"name":"VAT","ratePercent":20.0,"order":1,"compoundsOnPrior":false},
+                    |{"name":"Municipal","ratePercent":5.0,"order":2,"compoundsOnPrior":true}]}""".trimMargin()
+            )
+        }
+        assertEquals(HttpStatusCode.Created, resp.status)
+        val body = Json.parseToJsonElement(resp.bodyAsText()).jsonObject
+        assertEquals("INCLUSIVE", body["pricingMode"]?.jsonPrimitive?.content)
+        assertEquals("HALF_EVEN", body["roundingMode"]?.jsonPrimitive?.content)
+        val rates = body["rates"]!!.jsonArray
+        assertEquals(2, rates[1].jsonObject["order"]?.jsonPrimitive?.int)
+        assertEquals(true, rates[1].jsonObject["compoundsOnPrior"]?.jsonPrimitive?.boolean)
+    }
+
+    @Test
+    fun `a profile with no pricingMode or roundingMode defaults to exclusive HALF_UP`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val token = adminToken(client)
+
+        val resp = client.post("/tax-profiles") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+            contentType(ContentType.Application.Json)
+            setBody("""{"name":"Flat","rates":[{"name":"Sales","ratePercent":10.0}]}""")
+        }
+        val body = Json.parseToJsonElement(resp.bodyAsText()).jsonObject
+        assertEquals("EXCLUSIVE", body["pricingMode"]?.jsonPrimitive?.content)
+        assertEquals("HALF_UP", body["roundingMode"]?.jsonPrimitive?.content)
+        val rate = body["rates"]!!.jsonArray.single().jsonObject
+        assertEquals(0, rate["order"]?.jsonPrimitive?.int)
+        assertEquals(false, rate["compoundsOnPrior"]?.jsonPrimitive?.boolean)
+    }
+
+    @Test
+    fun `an invalid pricingMode or roundingMode is rejected with 400`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val token = adminToken(client)
+
+        val badPricing = client.post("/tax-profiles") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+            contentType(ContentType.Application.Json)
+            setBody("""{"name":"X","pricingMode":"BOGUS","rates":[]}""")
+        }
+        assertEquals(HttpStatusCode.BadRequest, badPricing.status)
+
+        val badRounding = client.post("/tax-profiles") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+            contentType(ContentType.Application.Json)
+            setBody("""{"name":"X","roundingMode":"UNNECESSARY","rates":[]}""")
+        }
+        assertEquals(HttpStatusCode.BadRequest, badRounding.status)
+    }
+
+    @Test
+    fun `updating only the rounding mode leaves rates and pricing mode untouched`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val token = adminToken(client)
+
+        val createResp = client.post("/tax-profiles") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+            contentType(ContentType.Application.Json)
+            setBody("""{"name":"Flat","pricingMode":"INCLUSIVE","rates":[{"name":"Sales","ratePercent":10.0}]}""")
+        }
+        val id = Json.parseToJsonElement(createResp.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
+
+        val updateResp = client.put("/tax-profiles/$id") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+            contentType(ContentType.Application.Json)
+            setBody("""{"roundingMode":"DOWN"}""")
+        }
+        assertEquals(HttpStatusCode.OK, updateResp.status)
+        val body = Json.parseToJsonElement(updateResp.bodyAsText()).jsonObject
+        assertEquals("DOWN", body["roundingMode"]?.jsonPrimitive?.content)
+        assertEquals("INCLUSIVE", body["pricingMode"]?.jsonPrimitive?.content)
+        assertEquals(1, body["rates"]?.jsonArray?.size)
+    }
+
+    @Test
+    fun `composite compounding rates change the calculated total exactly as configured`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val token = adminToken(client)
+
+        val createResp = client.post("/tax-profiles") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+            contentType(ContentType.Application.Json)
+            setBody(
+                """{"name":"Compound","rates":[{"name":"GST","ratePercent":5.0,"order":1,"compoundsOnPrior":false},
+                    |{"name":"PST","ratePercent":7.0,"order":2,"compoundsOnPrior":true}]}""".trimMargin()
+            )
+        }
+        val id = Json.parseToJsonElement(createResp.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
+
+        val calcResp = client.post("/tax-profiles/$id/calculate") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+            contentType(ContentType.Application.Json)
+            setBody("""{"amount":200.0}""")
+        }
+        val body = Json.parseToJsonElement(calcResp.bodyAsText()).jsonObject
+        assertEquals(24.7, body["totalTax"]?.jsonPrimitive?.double)
+        assertEquals(224.7, body["total"]?.jsonPrimitive?.double)
+    }
 }
