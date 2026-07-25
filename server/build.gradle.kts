@@ -28,6 +28,9 @@ dependencies {
     implementation(libs.opentelemetry.ktor30)
     implementation(libs.opentelemetry.sdk.autoconfigure)
     implementation(libs.logstash.logback.encoder)
+    implementation(libs.lucene.core)
+    implementation(libs.lucene.analysis.common)
     testImplementation(libs.ktor.serverTestHost)
+    testImplementation(libs.ktor.clientContentNegotiation)
     testImplementation(libs.kotlin.testJunit)
 }

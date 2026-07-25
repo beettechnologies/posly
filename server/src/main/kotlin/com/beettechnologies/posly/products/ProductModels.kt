@@ -22,6 +22,9 @@ data class Product(
     val taxCategory: TaxCategory,
     val modifiers: List<ProductModifier> = emptyList(),
     val imageUrls: List<String> = emptyList(),
+    val barcode: String? = null,
+    val category: String? = null,
+    val inStock: Boolean = true,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 )

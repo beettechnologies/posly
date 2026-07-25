@@ -1,5 +1,7 @@
 package com.beettechnologies.posly.products
 
+import com.beettechnologies.posly.products.search.ProductSearchIndex
+import com.beettechnologies.posly.products.search.SearchCache
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -10,11 +12,15 @@ sealed class ProductResult {
     data object NotFound : ProductResult()
 }
 
+data class ProductSearchPage(val items: List<Product>, val page: Int, val size: Int, val total: Int)
+
 class ProductService {
 
     private val products = ConcurrentHashMap<String, Product>() // id -> Product
     private val skuIndex = ConcurrentHashMap<String, String>()   // sku -> id
     private val imageStore = ConcurrentHashMap<String, ByteArray>() // imageId -> bytes
+    private val searchIndex = ProductSearchIndex()
+    private val searchCache = SearchCache()
 
     fun createProduct(req: CreateProductRequest): ProductResult {
         val taxCategory = runCatching { TaxCategory.valueOf(req.taxCategory) }.getOrNull()
@@ -35,11 +41,15 @@ class ProductService {
             price = req.price,
             taxCategory = taxCategory,
             modifiers = modifiers,
-            imageUrls = req.imageUrls.toList()
+            imageUrls = req.imageUrls.toList(),
+            barcode = req.barcode,
+            category = req.category,
+            inStock = req.inStock
         )
 
         products[product.id] = product
         skuIndex[product.sku] = product.id
+        reindex(product)
         return ProductResult.Created(product)
     }
 
@@ -71,16 +81,22 @@ class ProductService {
             price = req.price ?: existing.price,
             taxCategory = taxCategory,
             modifiers = modifiers,
+            barcode = req.barcode ?: existing.barcode,
+            category = req.category ?: existing.category,
+            inStock = req.inStock ?: existing.inStock,
             updatedAt = System.currentTimeMillis()
         )
 
         products[id] = updated
+        reindex(updated)
         return ProductResult.Updated(updated)
     }
 
     fun deleteProduct(id: String): Boolean {
         val product = products.remove(id) ?: return false
         skuIndex.remove(product.sku)
+        searchIndex.remove(id)
+        searchCache.invalidateAll()
         return true
     }
 
@@ -94,6 +110,29 @@ class ProductService {
             updatedAt = System.currentTimeMillis()
         )
         products[productId] = updated
+        reindex(updated)
         return imageUrl
+    }
+
+    fun search(
+        query: String?,
+        barcode: String?,
+        category: String?,
+        inStock: Boolean?,
+        page: Int,
+        size: Int
+    ): ProductSearchPage {
+        val cacheKey = listOf(query.orEmpty(), barcode.orEmpty(), category.orEmpty(), inStock?.toString().orEmpty(), page, size)
+            .joinToString("|")
+        val result = searchCache.getOrCompute(cacheKey) {
+            searchIndex.search(query, barcode, category, inStock, page, size)
+        }
+        val items = result.ids.mapNotNull { products[it] }
+        return ProductSearchPage(items = items, page = page, size = size, total = result.total)
+    }
+
+    private fun reindex(product: Product) {
+        searchIndex.index(product)
+        searchCache.invalidateAll()
     }
 }

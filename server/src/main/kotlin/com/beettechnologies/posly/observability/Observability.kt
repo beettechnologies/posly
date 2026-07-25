@@ -9,6 +9,7 @@ import io.ktor.server.plugins.callid.CallId
 import io.ktor.server.plugins.callid.callId
 import io.ktor.server.plugins.callid.callIdMdc
 import io.ktor.server.plugins.calllogging.CallLogging
+import io.ktor.server.request.httpMethod
 import io.ktor.server.request.path
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
@@ -22,7 +23,7 @@ import io.micrometer.core.instrument.binder.system.ProcessorMetrics
 import io.micrometer.prometheusmetrics.PrometheusConfig
 import io.micrometer.prometheusmetrics.PrometheusMeterRegistry
 import io.opentelemetry.api.trace.Span
-import io.opentelemetry.instrumentation.ktor.v3_0.server.KtorServerTelemetry
+import io.opentelemetry.instrumentation.ktor.v3_0.KtorServerTelemetry
 import io.opentelemetry.sdk.autoconfigure.AutoConfiguredOpenTelemetrySdk
 import java.util.UUID
 
@@ -39,10 +40,12 @@ fun Application.configureObservability() {
         .addPropertiesSupplier {
             mapOf(
                 "otel.service.name" to serviceName,
-                "otel.resource.attributes" to "deployment.environment=$environmentName"
+                "otel.resource.attributes" to "deployment.environment=$environmentName",
+                "otel.traces.exporter" to "none",
+                "otel.metrics.exporter" to "none",
+                "otel.logs.exporter" to "none"
             )
         }
-        .setResultAsGlobal()
         .build()
         .openTelemetrySdk
 

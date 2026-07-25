@@ -17,7 +17,10 @@ data class CreateProductRequest(
     val price: Double,
     val taxCategory: String = "STANDARD",
     val modifiers: List<ModifierRequest> = emptyList(),
-    val imageUrls: List<String> = emptyList()
+    val imageUrls: List<String> = emptyList(),
+    val barcode: String? = null,
+    val category: String? = null,
+    val inStock: Boolean = true
 )
 
 @Serializable
@@ -26,7 +29,10 @@ data class UpdateProductRequest(
     val description: String? = null,
     val price: Double? = null,
     val taxCategory: String? = null,
-    val modifiers: List<ModifierRequest>? = null
+    val modifiers: List<ModifierRequest>? = null,
+    val barcode: String? = null,
+    val category: String? = null,
+    val inStock: Boolean? = null
 )
 
 @Serializable
@@ -47,6 +53,9 @@ data class ProductResponse(
     val taxCategory: String,
     val modifiers: List<ModifierResponse>,
     val imageUrls: List<String>,
+    val barcode: String? = null,
+    val category: String? = null,
+    val inStock: Boolean = true,
     val createdAt: Long,
     val updatedAt: Long
 )

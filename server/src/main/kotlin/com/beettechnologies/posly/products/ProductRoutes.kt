@@ -170,6 +170,9 @@ private fun Product.toResponse() = ProductResponse(
         )
     },
     imageUrls = imageUrls,
+    barcode = barcode,
+    category = category,
+    inStock = inStock,
     createdAt = createdAt,
     updatedAt = updatedAt
 )

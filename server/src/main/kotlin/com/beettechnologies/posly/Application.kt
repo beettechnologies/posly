@@ -12,6 +12,7 @@ import com.beettechnologies.posly.devices.configureDeviceRoutes
 import com.beettechnologies.posly.observability.configureObservability
 import com.beettechnologies.posly.products.ProductService
 import com.beettechnologies.posly.products.configureProductRoutes
+import com.beettechnologies.posly.products.search.configureSearchRoutes
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.application.*
@@ -88,4 +89,5 @@ fun Application.module() {
     configureAuthRoutes(authService)
     configureDeviceRoutes(deviceRegistryService)
     configureProductRoutes(productService)
+    configureSearchRoutes(productService)
 }

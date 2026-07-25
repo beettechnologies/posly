@@ -68,7 +68,7 @@ class ProductRoutesTest {
         val token = managerToken(client)
 
         val resp = client.post("/products") {
-            header(HttpHeaders.Authorization, "******")
+            header(HttpHeaders.Authorization, "Bearer $token")
             contentType(ContentType.Application.Json)
             setBody(
                 """{"sku":"PROD-001","name":"Coffee Mug","price":9.99,"taxCategory":"STANDARD",
@@ -87,7 +87,7 @@ class ProductRoutesTest {
         val token = managerToken(client)
 
         val createResp = client.post("/products") {
-            header(HttpHeaders.Authorization, "******")
+            header(HttpHeaders.Authorization, "Bearer $token")
             contentType(ContentType.Application.Json)
             setBody("""{"sku":"PROD-002","name":"Tea Cup","price":5.49,"taxCategory":"REDUCED"}""")
         }
@@ -95,7 +95,7 @@ class ProductRoutesTest {
         val id = Json.parseToJsonElement(createResp.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
 
         val getResp = client.get("/products/$id") {
-            header(HttpHeaders.Authorization, "******")
+            header(HttpHeaders.Authorization, "Bearer $token")
         }
         assertEquals(HttpStatusCode.OK, getResp.status)
         val body = Json.parseToJsonElement(getResp.bodyAsText()).jsonObject
@@ -118,13 +118,13 @@ class ProductRoutesTest {
         val token = managerToken(client)
 
         client.post("/products") {
-            header(HttpHeaders.Authorization, "******")
+            header(HttpHeaders.Authorization, "Bearer $token")
             contentType(ContentType.Application.Json)
             setBody("""{"sku":"DUPE-SKU","name":"First","price":1.0,"taxCategory":"STANDARD"}""")
         }
 
         val dupeResp = client.post("/products") {
-            header(HttpHeaders.Authorization, "******")
+            header(HttpHeaders.Authorization, "Bearer $token")
             contentType(ContentType.Application.Json)
             setBody("""{"sku":"DUPE-SKU","name":"Second","price":2.0,"taxCategory":"STANDARD"}""")
         }
@@ -145,7 +145,7 @@ class ProductRoutesTest {
         val token = managerToken(client)
 
         val resp = client.post("/products") {
-            header(HttpHeaders.Authorization, "******")
+            header(HttpHeaders.Authorization, "Bearer $token")
             contentType(ContentType.Application.Json)
             setBody("""{"sku":"  ","name":"Item","price":1.0,"taxCategory":"STANDARD"}""")
         }
@@ -159,7 +159,7 @@ class ProductRoutesTest {
         val token = managerToken(client)
 
         val resp = client.post("/products") {
-            header(HttpHeaders.Authorization, "******")
+            header(HttpHeaders.Authorization, "Bearer $token")
             contentType(ContentType.Application.Json)
             setBody("""{"sku":"NEG-001","name":"Item","price":-5.0,"taxCategory":"STANDARD"}""")
         }
@@ -173,7 +173,7 @@ class ProductRoutesTest {
         val token = managerToken(client)
 
         val resp = client.post("/products") {
-            header(HttpHeaders.Authorization, "******")
+            header(HttpHeaders.Authorization, "Bearer $token")
             contentType(ContentType.Application.Json)
             setBody("""{"sku":"TAX-001","name":"Item","price":1.0,"taxCategory":"INVALID"}""")
         }
@@ -191,14 +191,14 @@ class ProductRoutesTest {
         val token = managerToken(client)
 
         val createResp = client.post("/products") {
-            header(HttpHeaders.Authorization, "******")
+            header(HttpHeaders.Authorization, "Bearer $token")
             contentType(ContentType.Application.Json)
             setBody("""{"sku":"UPD-001","name":"Widget","price":10.0,"taxCategory":"STANDARD"}""")
         }
         val id = Json.parseToJsonElement(createResp.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
 
         val updateResp = client.put("/products/$id") {
-            header(HttpHeaders.Authorization, "******")
+            header(HttpHeaders.Authorization, "Bearer $token")
             contentType(ContentType.Application.Json)
             setBody(
                 """{"price":15.99,"modifiers":[{"name":"Color","options":["Red","Blue"],"additionalCost":1.0}]}"""
@@ -220,7 +220,7 @@ class ProductRoutesTest {
         val token = managerToken(client)
 
         val resp = client.put("/products/non-existent-id") {
-            header(HttpHeaders.Authorization, "******")
+            header(HttpHeaders.Authorization, "Bearer $token")
             contentType(ContentType.Application.Json)
             setBody("""{"price":5.0}""")
         }
@@ -238,19 +238,19 @@ class ProductRoutesTest {
         val adminTok = adminToken(client)
 
         val createResp = client.post("/products") {
-            header(HttpHeaders.Authorization, "******")
+            header(HttpHeaders.Authorization, "Bearer $adminTok")
             contentType(ContentType.Application.Json)
             setBody("""{"sku":"DEL-001","name":"Deletable","price":1.0,"taxCategory":"STANDARD"}""")
         }
         val id = Json.parseToJsonElement(createResp.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
 
         val delResp = client.delete("/products/$id") {
-            header(HttpHeaders.Authorization, "******")
+            header(HttpHeaders.Authorization, "Bearer $adminTok")
         }
         assertEquals(HttpStatusCode.NoContent, delResp.status)
 
         val getResp = client.get("/products/$id") {
-            header(HttpHeaders.Authorization, "******")
+            header(HttpHeaders.Authorization, "Bearer $adminTok")
         }
         assertEquals(HttpStatusCode.NotFound, getResp.status)
     }
@@ -262,7 +262,7 @@ class ProductRoutesTest {
         val token = cashierToken(client)
 
         val resp = client.post("/products") {
-            header(HttpHeaders.Authorization, "******")
+            header(HttpHeaders.Authorization, "Bearer $token")
             contentType(ContentType.Application.Json)
             setBody("""{"sku":"CASHIER-001","name":"Item","price":1.0,"taxCategory":"STANDARD"}""")
         }
@@ -280,7 +280,7 @@ class ProductRoutesTest {
         val token = managerToken(client)
 
         val createResp = client.post("/products") {
-            header(HttpHeaders.Authorization, "******")
+            header(HttpHeaders.Authorization, "Bearer $token")
             contentType(ContentType.Application.Json)
             setBody("""{"sku":"IMG-001","name":"Picture Item","price":3.0,"taxCategory":"STANDARD"}""")
         }
@@ -288,7 +288,7 @@ class ProductRoutesTest {
 
         val imageBytes = "fake-image-data".toByteArray()
         val uploadResp = client.post("/products/$id/images") {
-            header(HttpHeaders.Authorization, "******")
+            header(HttpHeaders.Authorization, "Bearer $token")
             setBody(MultiPartFormDataContent(
                 formData {
                     append("file", imageBytes, Headers.build {
@@ -306,7 +306,7 @@ class ProductRoutesTest {
 
         // Verify the image URL appears on the product
         val getResp = client.get("/products/$id") {
-            header(HttpHeaders.Authorization, "******")
+            header(HttpHeaders.Authorization, "Bearer $token")
         }
         val productBody = Json.parseToJsonElement(getResp.bodyAsText()).jsonObject
         val imageUrls = productBody["imageUrls"]?.jsonArray?.map { it.jsonPrimitive.content }
@@ -321,7 +321,7 @@ class ProductRoutesTest {
         val token = managerToken(client)
 
         val resp = client.post("/products/non-existent/images") {
-            header(HttpHeaders.Authorization, "******")
+            header(HttpHeaders.Authorization, "Bearer $token")
             setBody(MultiPartFormDataContent(
                 formData {
                     append("file", "data".toByteArray(), Headers.build {
