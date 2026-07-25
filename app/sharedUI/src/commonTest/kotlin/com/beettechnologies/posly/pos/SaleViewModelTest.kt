@@ -7,8 +7,12 @@ import com.beettechnologies.posly.cart.CartResponse
 import com.beettechnologies.posly.cart.CartSessionStore
 import com.beettechnologies.posly.cart.CartTotalsResponse
 import com.beettechnologies.posly.cart.CreateCartOutcome
+import com.beettechnologies.posly.cart.DiscountDto
 import com.beettechnologies.posly.cart.GetCartOutcome
+import com.beettechnologies.posly.cart.RemoveCartItemOutcome
 import com.beettechnologies.posly.cart.SelectedModifierRequest
+import com.beettechnologies.posly.cart.SetCartDiscountOutcome
+import com.beettechnologies.posly.cart.UpdateCartItemQuantityOutcome
 import com.beettechnologies.posly.devices.DeviceCredentials
 import com.beettechnologies.posly.devices.DeviceCredentialsStore
 import com.beettechnologies.posly.products.ProductSearchApi
@@ -50,6 +54,26 @@ private fun product(id: String, name: String, price: Double = 5.0, barcode: Stri
     id = id, sku = "SKU-$id", name = name, price = price, category = null, inStock = true, barcode = barcode
 )
 
+private fun cartItem(
+    id: String = "item-1",
+    productId: String = "p1",
+    productName: String = "Widget",
+    quantity: Int = 1,
+    unitPrice: Double = 5.0
+) = CartItemResponse(
+    id = id,
+    productId = productId,
+    productName = productName,
+    quantity = quantity,
+    unitPrice = unitPrice,
+    taxCategory = "STANDARD",
+    selectedModifiers = emptyList(),
+    discount = null,
+    lineSubtotal = unitPrice * quantity,
+    lineDiscountAmount = 0.0,
+    lineTotal = unitPrice * quantity
+)
+
 private class FakeDeviceCredentialsStore(private val storeId: String? = "store-1") : DeviceCredentialsStore {
     override suspend fun isPaired(): Boolean = storeId != null
     override suspend fun getCredentials(): DeviceCredentials? =
@@ -67,9 +91,15 @@ private class FakeCartSessionStore(private var cartId: String? = null) : CartSes
 
 private class FakeCartApi(
     private var currentCart: CartResponse = cart(),
-    private val getCartOutcome: GetCartOutcome? = null
+    private val getCartOutcome: GetCartOutcome? = null,
+    private val updateQuantityOutcome: UpdateCartItemQuantityOutcome? = null,
+    private val removeItemOutcome: RemoveCartItemOutcome? = null
 ) : CartApi {
     var createCartCalls = 0
+    var addItemCalls = 0
+    var lastUpdateQuantityCall: Pair<String, Int>? = null
+    var lastRemoveItemCall: Pair<String, String?>? = null
+    var lastSetDiscountCall: DiscountDto? = null
 
     override suspend fun createCart(storeId: String): CreateCartOutcome {
         createCartCalls++
@@ -82,8 +112,10 @@ private class FakeCartApi(
         cartId: String,
         productId: String,
         quantity: Int,
-        selectedModifiers: List<SelectedModifierRequest>
+        selectedModifiers: List<SelectedModifierRequest>,
+        discount: DiscountDto?
     ): AddCartItemOutcome {
+        addItemCalls++
         val newItem = CartItemResponse(
             id = "item-${currentCart.items.size + 1}",
             productId = productId,
@@ -99,6 +131,34 @@ private class FakeCartApi(
         )
         currentCart = currentCart.copy(items = currentCart.items + newItem)
         return AddCartItemOutcome.Success(currentCart)
+    }
+
+    override suspend fun updateItemQuantity(cartId: String, itemId: String, quantity: Int): UpdateCartItemQuantityOutcome {
+        lastUpdateQuantityCall = itemId to quantity
+        updateQuantityOutcome?.let { return it }
+        currentCart = currentCart.copy(
+            items = currentCart.items.map {
+                if (it.id == itemId) {
+                    it.copy(quantity = quantity, lineSubtotal = it.unitPrice * quantity, lineTotal = it.unitPrice * quantity)
+                } else {
+                    it
+                }
+            }
+        )
+        return UpdateCartItemQuantityOutcome.Success(currentCart)
+    }
+
+    override suspend fun removeItem(cartId: String, itemId: String, reason: String?): RemoveCartItemOutcome {
+        lastRemoveItemCall = itemId to reason
+        removeItemOutcome?.let { return it }
+        currentCart = currentCart.copy(items = currentCart.items.filterNot { it.id == itemId })
+        return RemoveCartItemOutcome.Success(currentCart)
+    }
+
+    override suspend fun setCartDiscount(cartId: String, discount: DiscountDto?): SetCartDiscountOutcome {
+        lastSetDiscountCall = discount
+        currentCart = currentCart.copy(discount = discount)
+        return SetCartDiscountOutcome.Success(currentCart)
     }
 }
 
@@ -281,6 +341,132 @@ class SaleViewModelTest {
             "Ask a store manager to add this product from the admin console.",
             viewModel.uiState.value.infoMessage
         )
+    }
+
+    @Test
+    fun `changing an item's quantity updates the cart`() = runTest(dispatcher) {
+        val existingCart = cart(items = listOf(cartItem(id = "item-1", quantity = 1)))
+        val cartApi = FakeCartApi(currentCart = existingCart, getCartOutcome = GetCartOutcome.Success(existingCart))
+        val viewModel = SaleViewModel(FakeDeviceCredentialsStore(), FakeCartSessionStore(cartId = existingCart.id), cartApi, FakeProductSearchApi())
+        advanceUntilIdle()
+
+        viewModel.changeQuantity("item-1", 3)
+        advanceUntilIdle()
+
+        assertEquals("item-1" to 3, cartApi.lastUpdateQuantityCall)
+        assertEquals(3, viewModel.uiState.value.cart?.items?.single()?.quantity)
+    }
+
+    @Test
+    fun `changing quantity to zero or negative is a no-op`() = runTest(dispatcher) {
+        val existingCart = cart(items = listOf(cartItem(id = "item-1", quantity = 1)))
+        val cartApi = FakeCartApi(currentCart = existingCart, getCartOutcome = GetCartOutcome.Success(existingCart))
+        val viewModel = SaleViewModel(FakeDeviceCredentialsStore(), FakeCartSessionStore(cartId = existingCart.id), cartApi, FakeProductSearchApi())
+        advanceUntilIdle()
+
+        viewModel.changeQuantity("item-1", 0)
+        viewModel.changeQuantity("item-1", -1)
+        advanceUntilIdle()
+
+        assertEquals(null, cartApi.lastUpdateQuantityCall)
+        assertEquals(1, viewModel.uiState.value.cart?.items?.single()?.quantity)
+    }
+
+    @Test
+    fun `a rejected quantity update surfaces the server's error message`() = runTest(dispatcher) {
+        val existingCart = cart(items = listOf(cartItem(id = "item-1", quantity = 1)))
+        val cartApi = FakeCartApi(
+            currentCart = existingCart,
+            getCartOutcome = GetCartOutcome.Success(existingCart),
+            updateQuantityOutcome = UpdateCartItemQuantityOutcome.Rejected("quantity must be positive")
+        )
+        val viewModel = SaleViewModel(FakeDeviceCredentialsStore(), FakeCartSessionStore(cartId = existingCart.id), cartApi, FakeProductSearchApi())
+        advanceUntilIdle()
+
+        viewModel.changeQuantity("item-1", 5)
+        advanceUntilIdle()
+
+        assertEquals("quantity must be positive", viewModel.uiState.value.errorMessage)
+    }
+
+    @Test
+    fun `voiding an item removes it and remembers it for undo`() = runTest(dispatcher) {
+        val existingCart = cart(items = listOf(cartItem(id = "item-1", productId = "p1", productName = "Widget", quantity = 2)))
+        val cartApi = FakeCartApi(currentCart = existingCart, getCartOutcome = GetCartOutcome.Success(existingCart))
+        val viewModel = SaleViewModel(FakeDeviceCredentialsStore(), FakeCartSessionStore(cartId = existingCart.id), cartApi, FakeProductSearchApi())
+        advanceUntilIdle()
+
+        viewModel.voidItem("item-1", "Customer changed their mind")
+        advanceUntilIdle()
+
+        assertEquals("item-1" to "Customer changed their mind", cartApi.lastRemoveItemCall)
+        assertTrue(viewModel.uiState.value.cart?.items.orEmpty().isEmpty())
+        val voided = viewModel.uiState.value.lastVoidedItem
+        assertEquals("p1", voided?.productId)
+        assertEquals("Widget", voided?.productName)
+        assertEquals(2, voided?.quantity)
+    }
+
+    @Test
+    fun `undoing a void re-adds the item and clears the undo state`() = runTest(dispatcher) {
+        val existingCart = cart(items = listOf(cartItem(id = "item-1", productId = "p1", quantity = 2)))
+        val cartApi = FakeCartApi(currentCart = existingCart, getCartOutcome = GetCartOutcome.Success(existingCart))
+        val viewModel = SaleViewModel(FakeDeviceCredentialsStore(), FakeCartSessionStore(cartId = existingCart.id), cartApi, FakeProductSearchApi())
+        advanceUntilIdle()
+        viewModel.voidItem("item-1")
+        advanceUntilIdle()
+
+        viewModel.undoVoid()
+        advanceUntilIdle()
+
+        assertEquals(null, viewModel.uiState.value.lastVoidedItem)
+        assertEquals(1, viewModel.uiState.value.cart?.items?.size)
+        assertEquals(1, cartApi.addItemCalls)
+    }
+
+    @Test
+    fun `dismissing undo clears the state without re-adding the item`() = runTest(dispatcher) {
+        val existingCart = cart(items = listOf(cartItem(id = "item-1", quantity = 1)))
+        val cartApi = FakeCartApi(currentCart = existingCart, getCartOutcome = GetCartOutcome.Success(existingCart))
+        val viewModel = SaleViewModel(FakeDeviceCredentialsStore(), FakeCartSessionStore(cartId = existingCart.id), cartApi, FakeProductSearchApi())
+        advanceUntilIdle()
+        viewModel.voidItem("item-1")
+        advanceUntilIdle()
+
+        viewModel.dismissUndo()
+
+        assertEquals(null, viewModel.uiState.value.lastVoidedItem)
+        assertEquals(0, cartApi.addItemCalls)
+    }
+
+    @Test
+    fun `applying a quick discount sets a percentage discount on the cart`() = runTest(dispatcher) {
+        val existingCart = cart(items = listOf(cartItem()))
+        val cartApi = FakeCartApi(currentCart = existingCart, getCartOutcome = GetCartOutcome.Success(existingCart))
+        val viewModel = SaleViewModel(FakeDeviceCredentialsStore(), FakeCartSessionStore(cartId = existingCart.id), cartApi, FakeProductSearchApi())
+        advanceUntilIdle()
+
+        viewModel.applyQuickDiscount(10.0)
+        advanceUntilIdle()
+
+        assertEquals(DiscountDto("PERCENTAGE", 10.0), cartApi.lastSetDiscountCall)
+        assertEquals(DiscountDto("PERCENTAGE", 10.0), viewModel.uiState.value.cart?.discount)
+    }
+
+    @Test
+    fun `clearing the cart discount removes it`() = runTest(dispatcher) {
+        val existingCart = cart(items = listOf(cartItem()))
+        val cartApi = FakeCartApi(currentCart = existingCart, getCartOutcome = GetCartOutcome.Success(existingCart))
+        val viewModel = SaleViewModel(FakeDeviceCredentialsStore(), FakeCartSessionStore(cartId = existingCart.id), cartApi, FakeProductSearchApi())
+        advanceUntilIdle()
+        viewModel.applyQuickDiscount(10.0)
+        advanceUntilIdle()
+
+        viewModel.clearCartDiscount()
+        advanceUntilIdle()
+
+        assertEquals(null, cartApi.lastSetDiscountCall)
+        assertEquals(null, viewModel.uiState.value.cart?.discount)
     }
 
     @Test

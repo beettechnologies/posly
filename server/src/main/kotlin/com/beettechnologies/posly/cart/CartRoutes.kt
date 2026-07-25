@@ -12,6 +12,7 @@ import io.ktor.server.request.receive
 import io.ktor.server.response.respond
 import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
+import io.ktor.server.routing.patch
 import io.ktor.server.routing.post
 import io.ktor.server.routing.put
 import io.ktor.server.routing.route
@@ -113,11 +114,50 @@ fun Application.configureCartRoutes(cartService: CartService) {
                         }
                     }
 
+                    patch("/{id}/items/{itemId}") {
+                        val request = runCatching { call.receive<UpdateCartItemQuantityRequest>() }.getOrElse {
+                            call.respond(HttpStatusCode.BadRequest, ErrorResponse("Invalid request body"))
+                            return@patch
+                        }
+
+                        when (
+                            val result = cartService.updateItemQuantity(
+                                cartId = call.parameters["id"]!!,
+                                itemId = call.parameters["itemId"]!!,
+                                quantity = request.quantity
+                            )
+                        ) {
+                            is UpdateItemQuantityResult.Success -> call.respond(
+                                HttpStatusCode.OK,
+                                result.cart.toResponse(cartService.getTotals(result.cart))
+                            )
+                            UpdateItemQuantityResult.CartNotFound -> call.respond(HttpStatusCode.NotFound, ErrorResponse("Cart not found"))
+                            UpdateItemQuantityResult.CartNotOpen -> call.respond(
+                                HttpStatusCode.Conflict,
+                                ErrorResponse("Cart is not open")
+                            )
+                            UpdateItemQuantityResult.ItemNotFound -> call.respond(
+                                HttpStatusCode.NotFound,
+                                ErrorResponse("Item not found")
+                            )
+                            UpdateItemQuantityResult.InvalidQuantity -> call.respond(
+                                HttpStatusCode.BadRequest,
+                                ErrorResponse("quantity must be positive")
+                            )
+                        }
+                    }
+
                     delete("/{id}/items/{itemId}") {
+                        // A body is optional here (void reason) - a plain DELETE with no body still works.
+                        val reason = runCatching { call.receive<VoidCartItemRequest>() }.getOrNull()?.reason
+                        val actorId = call.tokenClaims()?.userId
+
                         when (
                             val result = cartService.removeItem(
                                 cartId = call.parameters["id"]!!,
-                                itemId = call.parameters["itemId"]!!
+                                itemId = call.parameters["itemId"]!!,
+                                reason = reason,
+                                actorId = actorId
                             )
                         ) {
                             is RemoveItemResult.Success -> call.respond(

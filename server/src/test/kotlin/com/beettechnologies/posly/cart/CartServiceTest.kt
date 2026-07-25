@@ -373,6 +373,104 @@ class CartServiceTest {
     }
 
     @Test
+    fun `updating an item quantity recalculates totals`() {
+        val h = Harness()
+        val storeId = h.seedStore()
+        val productId = h.seedProduct(price = 10.0)
+        val cart = (h.carts.createCart(storeId, null) as CreateCartResult.Success).cart
+        val added = (assertIs<AddItemResult.Success>(h.carts.addItem(cart.id, productId, quantity = 1))).cart
+        val itemId = added.items.single().id
+
+        val result = h.carts.updateItemQuantity(cart.id, itemId, quantity = 5)
+        val updated = (assertIs<UpdateItemQuantityResult.Success>(result)).cart
+
+        assertEquals(5, updated.items.single().quantity)
+        assertEquals(50.0, h.carts.getTotals(updated).subtotal)
+    }
+
+    @Test
+    fun `zero or negative quantity update is rejected`() {
+        val h = Harness()
+        val storeId = h.seedStore()
+        val productId = h.seedProduct(price = 10.0)
+        val cart = (h.carts.createCart(storeId, null) as CreateCartResult.Success).cart
+        val added = (assertIs<AddItemResult.Success>(h.carts.addItem(cart.id, productId, quantity = 1))).cart
+        val itemId = added.items.single().id
+
+        assertEquals(UpdateItemQuantityResult.InvalidQuantity, h.carts.updateItemQuantity(cart.id, itemId, quantity = 0))
+        assertEquals(UpdateItemQuantityResult.InvalidQuantity, h.carts.updateItemQuantity(cart.id, itemId, quantity = -1))
+        assertEquals(1, h.carts.getCart(cart.id)!!.items.single().quantity, "a rejected update must not mutate the item")
+    }
+
+    @Test
+    fun `updating the quantity of an unknown item is rejected`() {
+        val h = Harness()
+        val storeId = h.seedStore()
+        val cart = (h.carts.createCart(storeId, null) as CreateCartResult.Success).cart
+        assertEquals(UpdateItemQuantityResult.ItemNotFound, h.carts.updateItemQuantity(cart.id, "does-not-exist", quantity = 2))
+    }
+
+    @Test
+    fun `updating quantity on a checked-out cart is rejected`() {
+        val h = Harness()
+        val storeId = h.seedStore()
+        val productId = h.seedProduct(price = 10.0)
+        val cart = (h.carts.createCart(storeId, null) as CreateCartResult.Success).cart
+        val added = (assertIs<AddItemResult.Success>(h.carts.addItem(cart.id, productId, quantity = 1))).cart
+        val itemId = added.items.single().id
+        h.carts.checkout(cart.id, "key-1")
+
+        assertEquals(UpdateItemQuantityResult.CartNotOpen, h.carts.updateItemQuantity(cart.id, itemId, quantity = 2))
+    }
+
+    @Test
+    fun `voiding an item with a reason records an audit event`() {
+        val h = Harness()
+        val storeId = h.seedStore()
+        val productId = h.seedProduct(price = 10.0)
+        val cart = (h.carts.createCart(storeId, null) as CreateCartResult.Success).cart
+        val added = (assertIs<AddItemResult.Success>(h.carts.addItem(cart.id, productId, quantity = 3))).cart
+        val itemId = added.items.single().id
+
+        val result = h.carts.removeItem(cart.id, itemId, reason = "Customer changed their mind", actorId = "cashier-1")
+        assertIs<RemoveItemResult.Success>(result)
+
+        val events = h.carts.listVoidEvents(cart.id)
+        assertEquals(1, events.size)
+        val event = events.single()
+        assertEquals(itemId, event.itemId)
+        assertEquals(productId, event.productId)
+        assertEquals(3, event.quantity)
+        assertEquals("Customer changed their mind", event.reason)
+        assertEquals("cashier-1", event.actorId)
+    }
+
+    @Test
+    fun `voiding an item without a reason records a null reason`() {
+        val h = Harness()
+        val storeId = h.seedStore()
+        val productId = h.seedProduct(price = 10.0)
+        val cart = (h.carts.createCart(storeId, null) as CreateCartResult.Success).cart
+        val added = (assertIs<AddItemResult.Success>(h.carts.addItem(cart.id, productId, quantity = 1))).cart
+        val itemId = added.items.single().id
+
+        h.carts.removeItem(cart.id, itemId)
+
+        assertNull(h.carts.listVoidEvents(cart.id).single().reason)
+    }
+
+    @Test
+    fun `a failed void does not record an audit event`() {
+        val h = Harness()
+        val storeId = h.seedStore()
+        val cart = (h.carts.createCart(storeId, null) as CreateCartResult.Success).cart
+
+        h.carts.removeItem(cart.id, "does-not-exist", reason = "n/a")
+
+        assertTrue(h.carts.listVoidEvents(cart.id).isEmpty())
+    }
+
+    @Test
     fun `invalid discount values are rejected`() {
         val h = Harness()
         val storeId = h.seedStore()

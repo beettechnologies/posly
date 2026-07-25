@@ -6,6 +6,7 @@ import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
+import io.ktor.client.request.patch
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
@@ -139,6 +140,109 @@ class CartRoutesTest {
         assertEquals(HttpStatusCode.OK, removeResp.status)
         val totals = Json.parseToJsonElement(removeResp.bodyAsText()).jsonObject["totals"]!!.jsonObject
         assertEquals(4.0, totals["subtotal"]?.jsonPrimitive?.content?.toDouble())
+    }
+
+    @Test
+    fun `updating an item quantity recalculates totals server-side`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val adminTok = accessToken(client, "admin", "admin123")
+        val storeId = seedStoreId(client, adminTok)
+        val productId = seedProductId(client, adminTok, price = 10.0)
+        val cashierTok = cashierToken(client)
+        val cartId = createCart(client, cashierTok, storeId)
+        val addResp = client.post("/carts/$cartId/items") {
+            header(HttpHeaders.Authorization, "Bearer $cashierTok")
+            contentType(ContentType.Application.Json)
+            setBody("""{"productId":"$productId","quantity":1}""")
+        }
+        val itemId = Json.parseToJsonElement(addResp.bodyAsText()).jsonObject["items"]!!
+            .let { it as JsonArray }.first().jsonObject["id"]!!.jsonPrimitive.content
+
+        val patchResp = client.patch("/carts/$cartId/items/$itemId") {
+            header(HttpHeaders.Authorization, "Bearer $cashierTok")
+            contentType(ContentType.Application.Json)
+            setBody("""{"quantity":4}""")
+        }
+        assertEquals(HttpStatusCode.OK, patchResp.status)
+        val body = Json.parseToJsonElement(patchResp.bodyAsText()).jsonObject
+        assertEquals(40.0, body["totals"]!!.jsonObject["subtotal"]?.jsonPrimitive?.content?.toDouble())
+    }
+
+    @Test
+    fun `updating an item quantity to zero is rejected`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val adminTok = accessToken(client, "admin", "admin123")
+        val storeId = seedStoreId(client, adminTok)
+        val productId = seedProductId(client, adminTok, price = 10.0)
+        val cashierTok = cashierToken(client)
+        val cartId = createCart(client, cashierTok, storeId)
+        val addResp = client.post("/carts/$cartId/items") {
+            header(HttpHeaders.Authorization, "Bearer $cashierTok")
+            contentType(ContentType.Application.Json)
+            setBody("""{"productId":"$productId","quantity":1}""")
+        }
+        val itemId = Json.parseToJsonElement(addResp.bodyAsText()).jsonObject["items"]!!
+            .let { it as JsonArray }.first().jsonObject["id"]!!.jsonPrimitive.content
+
+        val patchResp = client.patch("/carts/$cartId/items/$itemId") {
+            header(HttpHeaders.Authorization, "Bearer $cashierTok")
+            contentType(ContentType.Application.Json)
+            setBody("""{"quantity":0}""")
+        }
+        assertEquals(HttpStatusCode.BadRequest, patchResp.status)
+    }
+
+    @Test
+    fun `voiding an item with a reason removes it and updates totals`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val adminTok = accessToken(client, "admin", "admin123")
+        val storeId = seedStoreId(client, adminTok)
+        val productId = seedProductId(client, adminTok, price = 10.0)
+        val cashierTok = cashierToken(client)
+        val cartId = createCart(client, cashierTok, storeId)
+        val addResp = client.post("/carts/$cartId/items") {
+            header(HttpHeaders.Authorization, "Bearer $cashierTok")
+            contentType(ContentType.Application.Json)
+            setBody("""{"productId":"$productId","quantity":1}""")
+        }
+        val itemId = Json.parseToJsonElement(addResp.bodyAsText()).jsonObject["items"]!!
+            .let { it as JsonArray }.first().jsonObject["id"]!!.jsonPrimitive.content
+
+        val voidResp = client.delete("/carts/$cartId/items/$itemId") {
+            header(HttpHeaders.Authorization, "Bearer $cashierTok")
+            contentType(ContentType.Application.Json)
+            setBody("""{"reason":"Customer changed their mind"}""")
+        }
+        assertEquals(HttpStatusCode.OK, voidResp.status)
+        val body = Json.parseToJsonElement(voidResp.bodyAsText()).jsonObject
+        assertEquals(0, (body["items"] as JsonArray).size)
+        assertEquals(0.0, body["totals"]!!.jsonObject["subtotal"]?.jsonPrimitive?.content?.toDouble())
+    }
+
+    @Test
+    fun `voiding an item with no request body still succeeds`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val adminTok = accessToken(client, "admin", "admin123")
+        val storeId = seedStoreId(client, adminTok)
+        val productId = seedProductId(client, adminTok, price = 10.0)
+        val cashierTok = cashierToken(client)
+        val cartId = createCart(client, cashierTok, storeId)
+        val addResp = client.post("/carts/$cartId/items") {
+            header(HttpHeaders.Authorization, "Bearer $cashierTok")
+            contentType(ContentType.Application.Json)
+            setBody("""{"productId":"$productId","quantity":1}""")
+        }
+        val itemId = Json.parseToJsonElement(addResp.bodyAsText()).jsonObject["items"]!!
+            .let { it as JsonArray }.first().jsonObject["id"]!!.jsonPrimitive.content
+
+        val voidResp = client.delete("/carts/$cartId/items/$itemId") {
+            header(HttpHeaders.Authorization, "Bearer $cashierTok")
+        }
+        assertEquals(HttpStatusCode.OK, voidResp.status)
     }
 
     @Test

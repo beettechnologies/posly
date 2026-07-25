@@ -23,6 +23,12 @@ data class AddCartItemRequest(
 data class SetCartDiscountRequest(val discount: DiscountDto?)
 
 @Serializable
+data class UpdateCartItemQuantityRequest(val quantity: Int)
+
+@Serializable
+data class VoidCartItemRequest(val reason: String? = null)
+
+@Serializable
 data class CheckoutRequest(val idempotencyKey: String)
 
 @Serializable

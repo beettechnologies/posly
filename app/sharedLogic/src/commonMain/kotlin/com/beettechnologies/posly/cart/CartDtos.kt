@@ -20,6 +20,15 @@ data class AddCartItemRequest(
 )
 
 @Serializable
+data class UpdateCartItemQuantityRequest(val quantity: Int)
+
+@Serializable
+data class VoidCartItemRequest(val reason: String? = null)
+
+@Serializable
+data class SetCartDiscountRequest(val discount: DiscountDto?)
+
+@Serializable
 data class SelectedModifierResponse(val modifierId: String, val option: String, val additionalCost: Double)
 
 @Serializable

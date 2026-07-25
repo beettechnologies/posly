@@ -6,8 +6,12 @@ import com.beettechnologies.posly.cart.CartItemResponse
 import com.beettechnologies.posly.cart.CartResponse
 import com.beettechnologies.posly.cart.CartTotalsResponse
 import com.beettechnologies.posly.cart.CreateCartOutcome
+import com.beettechnologies.posly.cart.DiscountDto
 import com.beettechnologies.posly.cart.GetCartOutcome
+import com.beettechnologies.posly.cart.RemoveCartItemOutcome
 import com.beettechnologies.posly.cart.SelectedModifierRequest
+import com.beettechnologies.posly.cart.SetCartDiscountOutcome
+import com.beettechnologies.posly.cart.UpdateCartItemQuantityOutcome
 import com.beettechnologies.posly.products.GetProductOutcome
 import com.beettechnologies.posly.products.ModifierResponse
 import com.beettechnologies.posly.products.ProductApi
@@ -99,11 +103,21 @@ private class FakeDetailCartApi(
         cartId: String,
         productId: String,
         quantity: Int,
-        selectedModifiers: List<SelectedModifierRequest>
+        selectedModifiers: List<SelectedModifierRequest>,
+        discount: DiscountDto?
     ): AddCartItemOutcome {
         lastAddItemCall = Triple(productId, quantity, selectedModifiers)
         return addResult(productId, quantity, selectedModifiers)
     }
+
+    override suspend fun updateItemQuantity(cartId: String, itemId: String, quantity: Int): UpdateCartItemQuantityOutcome =
+        error("not used in these tests")
+
+    override suspend fun removeItem(cartId: String, itemId: String, reason: String?): RemoveCartItemOutcome =
+        error("not used in these tests")
+
+    override suspend fun setCartDiscount(cartId: String, discount: DiscountDto?): SetCartDiscountOutcome =
+        error("not used in these tests")
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)

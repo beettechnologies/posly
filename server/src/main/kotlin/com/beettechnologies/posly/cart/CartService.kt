@@ -30,6 +30,14 @@ sealed class RemoveItemResult {
     data object ItemNotFound : RemoveItemResult()
 }
 
+sealed class UpdateItemQuantityResult {
+    data class Success(val cart: Cart) : UpdateItemQuantityResult()
+    data object CartNotFound : UpdateItemQuantityResult()
+    data object CartNotOpen : UpdateItemQuantityResult()
+    data object ItemNotFound : UpdateItemQuantityResult()
+    data object InvalidQuantity : UpdateItemQuantityResult()
+}
+
 sealed class SetCartDiscountResult {
     data class Success(val cart: Cart) : SetCartDiscountResult()
     data object CartNotFound : SetCartDiscountResult()
@@ -65,6 +73,7 @@ class CartService(
 ) {
     private val carts = ConcurrentHashMap<String, Cart>()
     private val checkoutLock = Any()
+    private val voidEvents = mutableListOf<CartItemVoidEvent>()
 
     fun createCart(storeId: String, createdBy: String?): CreateCartResult {
         if (storeService.getStore(storeId) == null) return CreateCartResult.StoreNotFound
@@ -142,8 +151,9 @@ class CartService(
         return outcome
     }
 
-    fun removeItem(cartId: String, itemId: String): RemoveItemResult {
+    fun removeItem(cartId: String, itemId: String, reason: String? = null, actorId: String? = null): RemoveItemResult {
         var outcome: RemoveItemResult = RemoveItemResult.CartNotFound
+        var removedItem: CartItem? = null
         carts.compute(cartId) { _, existing ->
             when {
                 existing == null -> {
@@ -159,11 +169,60 @@ class CartService(
                     existing
                 }
                 else -> {
+                    removedItem = existing.items.first { it.id == itemId }
                     val updated = existing.copy(
                         items = existing.items.filterNot { it.id == itemId },
                         updatedAt = nowProvider()
                     )
                     outcome = RemoveItemResult.Success(updated)
+                    updated
+                }
+            }
+        }
+        removedItem?.let { item ->
+            synchronized(voidEvents) {
+                voidEvents += CartItemVoidEvent(
+                    timestamp = nowProvider(),
+                    cartId = cartId,
+                    itemId = item.id,
+                    productId = item.productId,
+                    productName = item.productName,
+                    quantity = item.quantity,
+                    reason = reason,
+                    actorId = actorId
+                )
+            }
+        }
+        return outcome
+    }
+
+    fun listVoidEvents(cartId: String): List<CartItemVoidEvent> =
+        synchronized(voidEvents) { voidEvents.filter { it.cartId == cartId } }
+
+    fun updateItemQuantity(cartId: String, itemId: String, quantity: Int): UpdateItemQuantityResult {
+        if (quantity <= 0) return UpdateItemQuantityResult.InvalidQuantity
+
+        var outcome: UpdateItemQuantityResult = UpdateItemQuantityResult.CartNotFound
+        carts.compute(cartId) { _, existing ->
+            when {
+                existing == null -> {
+                    outcome = UpdateItemQuantityResult.CartNotFound
+                    null
+                }
+                existing.status != CartStatus.OPEN -> {
+                    outcome = UpdateItemQuantityResult.CartNotOpen
+                    existing
+                }
+                existing.items.none { it.id == itemId } -> {
+                    outcome = UpdateItemQuantityResult.ItemNotFound
+                    existing
+                }
+                else -> {
+                    val updated = existing.copy(
+                        items = existing.items.map { if (it.id == itemId) it.copy(quantity = quantity) else it },
+                        updatedAt = nowProvider()
+                    )
+                    outcome = UpdateItemQuantityResult.Success(updated)
                     updated
                 }
             }

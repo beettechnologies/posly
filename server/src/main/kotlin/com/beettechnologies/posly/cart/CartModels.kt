@@ -147,4 +147,16 @@ data class OrderEvent(
     val detail: String? = null
 )
 
+/** Audit record of a voided (removed) cart line item, kept for traceability even though the item itself is gone from the cart. */
+data class CartItemVoidEvent(
+    val timestamp: Instant,
+    val cartId: String,
+    val itemId: String,
+    val productId: String,
+    val productName: String,
+    val quantity: Int,
+    val reason: String?,
+    val actorId: String?
+)
+
 internal fun roundCents(value: Double): Double = round(value * 100.0) / 100.0

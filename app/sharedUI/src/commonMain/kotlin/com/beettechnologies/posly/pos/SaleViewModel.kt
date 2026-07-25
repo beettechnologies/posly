@@ -7,7 +7,12 @@ import com.beettechnologies.posly.cart.CartApi
 import com.beettechnologies.posly.cart.CartResponse
 import com.beettechnologies.posly.cart.CartSessionStore
 import com.beettechnologies.posly.cart.CreateCartOutcome
+import com.beettechnologies.posly.cart.DiscountDto
 import com.beettechnologies.posly.cart.GetCartOutcome
+import com.beettechnologies.posly.cart.RemoveCartItemOutcome
+import com.beettechnologies.posly.cart.SelectedModifierRequest
+import com.beettechnologies.posly.cart.SetCartDiscountOutcome
+import com.beettechnologies.posly.cart.UpdateCartItemQuantityOutcome
 import com.beettechnologies.posly.devices.DeviceCredentialsStore
 import com.beettechnologies.posly.products.ProductSearchApi
 import com.beettechnologies.posly.products.SearchOutcome
@@ -19,6 +24,15 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
+/** Enough of a voided line item to re-add it via [SaleViewModel.undoVoid] - the re-added item gets a new id. */
+data class VoidedCartItem(
+    val productId: String,
+    val productName: String,
+    val quantity: Int,
+    val selectedModifiers: List<SelectedModifierRequest>,
+    val discount: DiscountDto?
+)
+
 data class SaleUiState(
     val cart: CartResponse? = null,
     val searchQuery: String = "",
@@ -27,7 +41,8 @@ data class SaleUiState(
     val showNoResults: Boolean = false,
     val selectedProductId: String? = null,
     val infoMessage: String? = null,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val lastVoidedItem: VoidedCartItem? = null
 )
 
 class SaleViewModel(
@@ -176,6 +191,112 @@ class SaleViewModel(
                 _uiState.value.copy(isSearching = false, errorMessage = result.message)
             is AddCartItemOutcome.NetworkError -> _uiState.value =
                 _uiState.value.copy(isSearching = false, errorMessage = result.message)
+        }
+    }
+
+    /** Ignores non-positive quantities rather than sending them - the stepper's decrement stops at 1 for the same reason. */
+    fun changeQuantity(itemId: String, newQuantity: Int) {
+        if (newQuantity <= 0) return
+        val cartId = _uiState.value.cart?.id ?: return
+
+        viewModelScope.launch {
+            when (val result = cartApi.updateItemQuantity(cartId, itemId, newQuantity)) {
+                is UpdateCartItemQuantityOutcome.Success ->
+                    _uiState.value = _uiState.value.copy(cart = result.cart, errorMessage = null)
+                UpdateCartItemQuantityOutcome.CartNotFound -> _uiState.value =
+                    _uiState.value.copy(errorMessage = "Cart not found - please restart the sale")
+                UpdateCartItemQuantityOutcome.ItemNotFound -> _uiState.value =
+                    _uiState.value.copy(errorMessage = "Item not found")
+                is UpdateCartItemQuantityOutcome.Rejected -> _uiState.value =
+                    _uiState.value.copy(errorMessage = result.message)
+                is UpdateCartItemQuantityOutcome.NetworkError -> _uiState.value =
+                    _uiState.value.copy(errorMessage = result.message)
+            }
+        }
+    }
+
+    /** Removes a line item, keeping enough of it in [SaleUiState.lastVoidedItem] to offer Undo. */
+    fun voidItem(itemId: String, reason: String? = null) {
+        val cart = _uiState.value.cart ?: return
+        val item = cart.items.find { it.id == itemId } ?: return
+
+        viewModelScope.launch {
+            when (val result = cartApi.removeItem(cart.id, itemId, reason)) {
+                is RemoveCartItemOutcome.Success -> _uiState.value = _uiState.value.copy(
+                    cart = result.cart,
+                    errorMessage = null,
+                    lastVoidedItem = VoidedCartItem(
+                        productId = item.productId,
+                        productName = item.productName,
+                        quantity = item.quantity,
+                        selectedModifiers = item.selectedModifiers.map { SelectedModifierRequest(it.modifierId, it.option) },
+                        discount = item.discount
+                    )
+                )
+                RemoveCartItemOutcome.CartNotFound -> _uiState.value =
+                    _uiState.value.copy(errorMessage = "Cart not found - please restart the sale")
+                RemoveCartItemOutcome.ItemNotFound -> _uiState.value =
+                    _uiState.value.copy(errorMessage = "Item not found")
+                is RemoveCartItemOutcome.Rejected -> _uiState.value =
+                    _uiState.value.copy(errorMessage = result.message)
+                is RemoveCartItemOutcome.NetworkError -> _uiState.value =
+                    _uiState.value.copy(errorMessage = result.message)
+            }
+        }
+    }
+
+    /** Re-adds the last voided item as a new line - there is no server-side undo, so this replays the add. */
+    fun undoVoid() {
+        val voided = _uiState.value.lastVoidedItem ?: return
+        val cartId = _uiState.value.cart?.id ?: return
+        _uiState.value = _uiState.value.copy(lastVoidedItem = null)
+
+        viewModelScope.launch {
+            when (
+                val result = cartApi.addItem(
+                    cartId,
+                    voided.productId,
+                    voided.quantity,
+                    voided.selectedModifiers,
+                    voided.discount
+                )
+            ) {
+                is AddCartItemOutcome.Success -> _uiState.value = _uiState.value.copy(cart = result.cart, errorMessage = null)
+                AddCartItemOutcome.CartNotFound -> _uiState.value =
+                    _uiState.value.copy(errorMessage = "Cart not found - please restart the sale")
+                is AddCartItemOutcome.Rejected -> _uiState.value =
+                    _uiState.value.copy(errorMessage = "Could not restore \"${voided.productName}\": ${result.message}")
+                is AddCartItemOutcome.NetworkError -> _uiState.value =
+                    _uiState.value.copy(errorMessage = result.message)
+            }
+        }
+    }
+
+    fun dismissUndo() {
+        _uiState.value = _uiState.value.copy(lastVoidedItem = null)
+    }
+
+    /** Applies a preset percentage-off discount to the whole cart. */
+    fun applyQuickDiscount(percent: Double) {
+        setCartDiscount(DiscountDto(type = "PERCENTAGE", value = percent))
+    }
+
+    fun clearCartDiscount() {
+        setCartDiscount(null)
+    }
+
+    private fun setCartDiscount(discount: DiscountDto?) {
+        val cartId = _uiState.value.cart?.id ?: return
+        viewModelScope.launch {
+            when (val result = cartApi.setCartDiscount(cartId, discount)) {
+                is SetCartDiscountOutcome.Success -> _uiState.value = _uiState.value.copy(cart = result.cart, errorMessage = null)
+                SetCartDiscountOutcome.CartNotFound -> _uiState.value =
+                    _uiState.value.copy(errorMessage = "Cart not found - please restart the sale")
+                is SetCartDiscountOutcome.Rejected -> _uiState.value =
+                    _uiState.value.copy(errorMessage = result.message)
+                is SetCartDiscountOutcome.NetworkError -> _uiState.value =
+                    _uiState.value.copy(errorMessage = result.message)
+            }
         }
     }
 
