@@ -9,6 +9,7 @@ import com.beettechnologies.posly.auth.UserService
 import com.beettechnologies.posly.auth.configureAuthRoutes
 import com.beettechnologies.posly.devices.DeviceRegistryService
 import com.beettechnologies.posly.devices.configureDeviceRoutes
+import com.beettechnologies.posly.observability.configureObservability
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.application.*
@@ -40,6 +41,8 @@ fun Application.module() {
     val userService = UserService()
     val authService = AuthService(userService, jwtService)
     val deviceRegistryService = DeviceRegistryService()
+
+    configureObservability()
 
     install(ContentNegotiation) {
         json(Json { ignoreUnknownKeys = true })

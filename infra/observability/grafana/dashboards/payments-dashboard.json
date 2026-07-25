@@ -1,0 +1,42 @@
+{
+  "title": "Posly Payments API",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Payments Request Rate (rps)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(ktor_http_server_requests_seconds_count{route=~\"/payments.*\"}[5m]))",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Payments Error Rate",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(ktor_http_server_requests_seconds_count{route=~\"/payments.*\",status=~\"5..\"}[5m]))",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "P95 Payments Latency (ms)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(ktor_http_server_requests_seconds_bucket{route=~\"/payments.*\"}[5m])) by (le)) * 1000",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}
