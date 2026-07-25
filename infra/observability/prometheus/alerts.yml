@@ -1,0 +1,46 @@
+groups:
+  - name: posly-server-alerts
+    rules:
+      - alert: PoslyAuth5xxRateHigh
+        expr: sum(rate(ktor_http_server_requests_seconds_count{route=~"/auth.*",status=~"5.."}[5m])) > 0.2
+        for: 10m
+        labels:
+          severity: page
+          service: posly-auth
+        annotations:
+          summary: "Auth service 5xx rate is above threshold"
+          description: "Auth endpoints are returning elevated 5xx responses for 10m."
+          runbook_url: "https://github.com/beettechnologies/posly/blob/main/docs/runbooks/observability-alerts.md"
+
+      - alert: PoslyAuthP95LatencyHigh
+        expr: histogram_quantile(0.95, sum(rate(ktor_http_server_requests_seconds_bucket{route=~"/auth.*"}[5m])) by (le)) > 1.0
+        for: 15m
+        labels:
+          severity: warning
+          service: posly-auth
+        annotations:
+          summary: "Auth p95 latency is above 1s"
+          description: "Auth endpoint p95 latency has remained above 1 second for 15m."
+          runbook_url: "https://github.com/beettechnologies/posly/blob/main/docs/runbooks/observability-alerts.md"
+
+      - alert: PoslyPayments5xxRateHigh
+        expr: sum(rate(ktor_http_server_requests_seconds_count{route=~"/payments.*",status=~"5.."}[5m])) > 0.1
+        for: 10m
+        labels:
+          severity: page
+          service: posly-payments
+        annotations:
+          summary: "Payments service 5xx rate is above threshold"
+          description: "Payments endpoints are returning elevated 5xx responses for 10m."
+          runbook_url: "https://github.com/beettechnologies/posly/blob/main/docs/runbooks/observability-alerts.md"
+
+      - alert: PoslyNoTracesExported
+        expr: increase(otel_exporter_sent_spans[10m]) == 0
+        for: 15m
+        labels:
+          severity: warning
+          service: posly-server
+        annotations:
+          summary: "No traces exported from Posly server"
+          description: "No spans were exported in the last 10m; check OTLP endpoint and credentials."
+          runbook_url: "https://github.com/beettechnologies/posly/blob/main/docs/runbooks/observability-alerts.md"

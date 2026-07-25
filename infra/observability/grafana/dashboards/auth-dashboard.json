@@ -1,0 +1,42 @@
+{
+  "title": "Posly Auth API",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Auth Request Rate (rps)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(ktor_http_server_requests_seconds_count{route=~\"/auth.*\"}[5m]))",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Auth Error Rate",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(ktor_http_server_requests_seconds_count{route=~\"/auth.*\",status=~\"5..\"}[5m]))",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "P95 Auth Latency (ms)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(ktor_http_server_requests_seconds_bucket{route=~\"/auth.*\"}[5m])) by (le)) * 1000",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}

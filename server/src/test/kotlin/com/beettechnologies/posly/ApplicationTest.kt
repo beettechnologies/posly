@@ -38,4 +38,23 @@ class ApplicationTest {
         assertEquals(HttpStatusCode.OK, response.status)
         assertEquals("OK", response.bodyAsText())
     }
+
+    @Test
+    fun testMetricsEndpoint() = testApplication {
+        configureApp()
+        val response = client.get("/metrics")
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(response.bodyAsText().contains("ktor_http_server_requests_seconds"))
+    }
+
+    @Test
+    fun testCorrelationIdEchoedInResponseHeader() = testApplication {
+        configureApp()
+        val expectedCorrelationId = "obs-correlation-test-id"
+        val response = client.get("/health") {
+            header("X-Correlation-Id", expectedCorrelationId)
+        }
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(expectedCorrelationId, response.headers["X-Correlation-Id"])
+    }
 }

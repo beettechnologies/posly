@@ -245,12 +245,28 @@ terraform apply
 | ECS service events | AWS ECS console → Cluster → Service → Events tab |
 | ALB access logs | Enable in the ALB attributes if needed |
 | Container Insights | AWS CloudWatch → Container Insights → ECS |
+| Prometheus metrics | `GET /metrics` on the server service |
+| Traces (OTLP) | Jaeger/Datadog APM (configured via `OTEL_*` env vars) |
 
 Stream live logs:
 
 ```bash
 aws logs tail "/posly/dev/server" --follow
 ```
+
+Synthetic observability test:
+
+```bash
+CID="synthetic-obs-test-$(date +%s)"
+curl -H "X-Correlation-Id: $CID" https://<env>.posly.example.com/health
+curl https://<env>.posly.example.com/metrics | grep "ktor_http_server_requests_seconds_count"
+```
+
+Then verify:
+- Structured JSON log includes `correlationId=$CID`
+- Trace backend has span with attribute `correlation.id=$CID`
+- Dashboards in `infra/observability/grafana/dashboards` show request samples
+- Alert playbook in `docs/runbooks/observability-alerts.md` is actionable
 
 ---
 
