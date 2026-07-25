@@ -23,6 +23,7 @@ import org.koin.compose.koinInject
  */
 @Composable
 fun DashboardScreen(
+    onNewSale: () -> Unit,
     onManageStores: () -> Unit,
     onManageTaxProfiles: () -> Unit,
     onPairDevice: () -> Unit,
@@ -43,6 +44,9 @@ fun DashboardScreen(
             style = MaterialTheme.typography.headlineSmall,
             modifier = Modifier.padding(bottom = 24.dp)
         )
+        Button(onClick = onNewSale, modifier = Modifier.padding(bottom = 12.dp)) {
+            Text("New Sale")
+        }
         Button(onClick = onManageStores, modifier = Modifier.padding(bottom = 12.dp)) {
             Text("Manage Stores")
         }
