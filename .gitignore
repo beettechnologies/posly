@@ -34,3 +34,10 @@ build/
 data/
 *.mv.db
 *.trace.db
+
+# Local machine-specific config (SDK path, etc.)
+local.properties
+
+# IntelliJ IDE
+.idea/
+out/
