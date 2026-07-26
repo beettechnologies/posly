@@ -2,7 +2,8 @@ package com.beettechnologies.posly.payments
 
 import com.beettechnologies.posly.TestDatabase
 import com.beettechnologies.posly.TestDatabaseConfig
-
+import com.beettechnologies.posly.audit.AuditEvent
+import com.beettechnologies.posly.audit.AuditService
 import com.beettechnologies.posly.module
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
@@ -27,6 +28,7 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 private const val TEST_WEBHOOK_SECRET = "test-webhook-secret-at-least-this-long"
@@ -123,10 +125,16 @@ class PaymentRoutesTest {
         return Json.parseToJsonElement(resp.bodyAsText()).jsonObject
     }
 
-    private suspend fun postWebhook(client: HttpClient, body: String, signature: String? = sign(body)): io.ktor.client.statement.HttpResponse =
+    private suspend fun postWebhook(
+        client: HttpClient,
+        body: String,
+        signature: String? = sign(body),
+        correlationId: String? = null
+    ): io.ktor.client.statement.HttpResponse =
         client.post("/payments/webhook") {
             contentType(ContentType.Application.Json)
             if (signature != null) header("X-Webhook-Signature", signature)
+            if (correlationId != null) header("X-Correlation-Id", correlationId)
             setBody(body)
         }
 
@@ -184,6 +192,43 @@ class PaymentRoutesTest {
             payment["maskedCardNumber"]?.jsonPrimitive?.content,
             (orderBody["payments"] as JsonArray).single().jsonObject["maskedCardNumber"]?.jsonPrimitive?.content
         )
+    }
+
+    @Test
+    fun `an approved webhook writes an ORDER_PAYMENT_CONFIRMED audit record with no userId but the correlation id`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val adminTok = accessToken(client, "admin", "admin123")
+        val cashierTok = accessToken(client, "cashier", "cashier123")
+        val orderId = seedPendingOrder(client, adminTok, cashierTok)
+        val payment = createPayment(client, cashierTok, orderId)
+        val terminalTransactionId = payment["terminalTransactionId"]!!.jsonPrimitive.content
+
+        val body = """{"eventId":"evt-audit-1","terminalTransactionId":"$terminalTransactionId","outcome":"APPROVED"}"""
+        val webhookResp = postWebhook(client, body, correlationId = "test-correlation-webhook")
+        assertEquals(HttpStatusCode.OK, webhookResp.status)
+
+        val entries = AuditService.list(event = AuditEvent.ORDER_PAYMENT_CONFIRMED, correlationId = "test-correlation-webhook")
+        assertEquals(1, entries.size)
+        val entry = entries.single()
+        assertEquals("orderId=$orderId source=gateway_webhook", entry.detail)
+        assertNull(entry.userId)
+    }
+
+    @Test
+    fun `a declined webhook writes no ORDER_PAYMENT_CONFIRMED audit record`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val adminTok = accessToken(client, "admin", "admin123")
+        val cashierTok = accessToken(client, "cashier", "cashier123")
+        val orderId = seedPendingOrder(client, adminTok, cashierTok)
+        val payment = createPayment(client, cashierTok, orderId)
+        val terminalTransactionId = payment["terminalTransactionId"]!!.jsonPrimitive.content
+
+        val body = """{"eventId":"evt-audit-2","terminalTransactionId":"$terminalTransactionId","outcome":"DECLINED"}"""
+        postWebhook(client, body, correlationId = "test-correlation-declined")
+
+        assertTrue(AuditService.list(event = AuditEvent.ORDER_PAYMENT_CONFIRMED, correlationId = "test-correlation-declined").isEmpty())
     }
 
     @Test

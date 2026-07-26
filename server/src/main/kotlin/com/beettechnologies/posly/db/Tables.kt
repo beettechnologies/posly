@@ -147,3 +147,16 @@ object FeatureFlagsTable : Table("feature_flags") {
     val updatedAt = long("updated_at")
     override val primaryKey = PrimaryKey(id)
 }
+
+object AuditTable : Table("audit_log") {
+    val id = varchar("id", 36)
+    val timestamp = timestamp("timestamp")
+    val event = varchar("event", 50)
+    val username = varchar("username", 100).nullable()
+    val userId = varchar("user_id", 36).nullable()
+    val deviceId = varchar("device_id", 36).nullable()
+    val correlationId = varchar("correlation_id", 128).nullable()
+    val remoteIp = varchar("remote_ip", 100).nullable()
+    val detail = text("detail").nullable()
+    override val primaryKey = PrimaryKey(id)
+}

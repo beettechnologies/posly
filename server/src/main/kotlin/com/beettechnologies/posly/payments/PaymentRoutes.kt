@@ -1,5 +1,7 @@
 package com.beettechnologies.posly.payments
 
+import com.beettechnologies.posly.audit.AuditEvent
+import com.beettechnologies.posly.audit.AuditService
 import com.beettechnologies.posly.auth.ErrorResponse
 import com.beettechnologies.posly.model.Role
 import com.beettechnologies.posly.rbac.withRole
@@ -7,6 +9,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.Application
 import io.ktor.server.application.call
 import io.ktor.server.auth.authenticate
+import io.ktor.server.plugins.callid.callId
 import io.ktor.server.request.header
 import io.ktor.server.request.receive
 import io.ktor.server.request.receiveText
@@ -130,7 +133,16 @@ fun Application.configurePaymentRoutes(paymentGatewayService: PaymentGatewayServ
                     declineReason = payload.declineReason
                 )
             ) {
-                is WebhookResult.Success -> call.respond(HttpStatusCode.OK, result.payment.toResponse())
+                is WebhookResult.Success -> {
+                    if (approved) {
+                        AuditService.record(
+                            AuditEvent.ORDER_PAYMENT_CONFIRMED,
+                            correlationId = call.callId,
+                            detail = "orderId=${result.payment.orderId} source=gateway_webhook"
+                        )
+                    }
+                    call.respond(HttpStatusCode.OK, result.payment.toResponse())
+                }
                 WebhookResult.PaymentNotFound -> call.respond(HttpStatusCode.NotFound, ErrorResponse("Payment not found"))
                 WebhookResult.AlreadyProcessed -> call.respond(HttpStatusCode.OK, ErrorResponse("Event already processed"))
             }

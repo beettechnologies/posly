@@ -9,6 +9,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.Application
 import io.ktor.server.application.call
 import io.ktor.server.auth.authenticate
+import io.ktor.server.plugins.callid.callId
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
 import io.ktor.server.routing.get
@@ -74,7 +75,7 @@ fun Application.configureSyncRoutes(offlineSyncService: OfflineSyncService) {
             }
 
             when (
-                val result = offlineSyncService.ingestBatch(request.clientId, request.clientSecret, conflictPolicy, sales)
+                val result = offlineSyncService.ingestBatch(request.clientId, request.clientSecret, conflictPolicy, sales, correlationId = call.callId)
             ) {
                 is IngestBatchResult.Success -> call.respond(
                     HttpStatusCode.OK,

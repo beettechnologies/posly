@@ -61,29 +61,30 @@ class OfflineSyncService(
         clientId: String,
         clientSecret: String,
         conflictPolicy: ConflictPolicy,
-        sales: List<OfflineSaleInput>
+        sales: List<OfflineSaleInput>,
+        correlationId: String? = null
     ): IngestBatchResult {
         val device = when (val auth = deviceRegistryService.authenticateDevice(clientId, clientSecret)) {
             is DeviceAuthResult.Success -> auth.device
             DeviceAuthResult.InvalidCredentials -> return IngestBatchResult.InvalidCredentials
             DeviceAuthResult.Deprovisioned -> return IngestBatchResult.DeviceDeprovisioned
         }
-        return IngestBatchResult.Success(sales.map { sale -> ingestSale(device, conflictPolicy, sale) })
+        return IngestBatchResult.Success(sales.map { sale -> ingestSale(device, conflictPolicy, sale, correlationId) })
     }
 
     fun listConflicts(): List<OfflineSaleRecord> =
         ledger.values.filter { it.outcome != OfflineSaleOutcome.CREATED }.sortedBy { it.processedAt }
 
-    private fun ingestSale(device: DeviceRecord, conflictPolicy: ConflictPolicy, sale: OfflineSaleInput): OfflineSaleOutcomeResult {
+    private fun ingestSale(device: DeviceRecord, conflictPolicy: ConflictPolicy, sale: OfflineSaleInput, correlationId: String?): OfflineSaleOutcomeResult {
         synchronized(ingestLock) {
             ledger[sale.idempotencyKey]?.let { return OfflineSaleOutcomeResult(it, replayed = true) }
-            val record = processNewSale(device, conflictPolicy, sale)
+            val record = processNewSale(device, conflictPolicy, sale, correlationId)
             ledger[sale.idempotencyKey] = record
             return OfflineSaleOutcomeResult(record, replayed = false)
         }
     }
 
-    private fun processNewSale(device: DeviceRecord, conflictPolicy: ConflictPolicy, sale: OfflineSaleInput): OfflineSaleRecord {
+    private fun processNewSale(device: DeviceRecord, conflictPolicy: ConflictPolicy, sale: OfflineSaleInput, correlationId: String?): OfflineSaleRecord {
         val now = nowProvider()
 
         fun rejected(conflicts: List<ItemConflict>): OfflineSaleRecord {
@@ -193,6 +194,12 @@ class OfflineSyncService(
             else -> OfflineSaleOutcome.CONFLICT_RESOLVED_CONVERT
         }
         if (conflicts.isNotEmpty()) auditConflict(sale.idempotencyKey, device.id, conflicts)
+        AuditService.record(
+            AuditEvent.ORDER_CREATED,
+            deviceId = device.id,
+            correlationId = correlationId,
+            detail = "orderId=${order.id} source=offline_sync outcome=$outcome"
+        )
         return OfflineSaleRecord(
             idempotencyKey = sale.idempotencyKey,
             deviceId = device.id,

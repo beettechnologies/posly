@@ -1,5 +1,6 @@
 package com.beettechnologies.posly
 
+import com.beettechnologies.posly.db.AuditTable
 import com.beettechnologies.posly.db.FeatureFlagsTable
 import com.beettechnologies.posly.db.OrderEventsTable
 import com.beettechnologies.posly.db.OrdersTable
@@ -36,7 +37,7 @@ object TestDatabase {
             SchemaUtils.create(
                 StoresTable, TaxProfilesTable, ProductsTable, ProductImagesTable,
                 UsersTable, OrdersTable, OrderEventsTable, ShiftsTable, ShiftAuditEventsTable,
-                FeatureFlagsTable
+                FeatureFlagsTable, AuditTable
             )
         }
     }
@@ -53,6 +54,7 @@ object TestDatabase {
             TaxProfilesTable.deleteAll()
             StoresTable.deleteAll()
             FeatureFlagsTable.deleteAll()
+            AuditTable.deleteAll()
         }
     }
 }
@@ -60,9 +62,10 @@ object TestDatabase {
 /**
  * The [io.ktor.server.config.MapApplicationConfig] entries every `*RoutesTest.kt` splices in:
  * `database.*` points `Application.module()`'s `DatabaseFactory.init` at the same H2 instance as
- * [TestDatabase]; `backup.directory` and `secrets.rotationGracePeriodMs` satisfy
- * `Application.module()`'s unconditional reads of those properties (used to construct
- * `BackupService`/`InMemorySecretsManager`) with throwaway/short-enough-for-tests values.
+ * [TestDatabase]; `backup.directory`, `secrets.rotationGracePeriodMs`, and the `audit.*` keys
+ * satisfy `Application.module()`'s unconditional reads of those properties (used to construct
+ * `BackupService`/`InMemorySecretsManager`/`AuditRetentionService`) with
+ * throwaway/short-enough-for-tests values.
  */
 object TestDatabaseConfig {
     val entries: Array<Pair<String, String>> = arrayOf(
@@ -71,6 +74,9 @@ object TestDatabaseConfig {
         "database.password" to "",
         "database.maxPoolSize" to "5",
         "backup.directory" to "build/test-backups",
-        "secrets.rotationGracePeriodMs" to "86400000"
+        "secrets.rotationGracePeriodMs" to "86400000",
+        "audit.retentionDays" to "90",
+        "audit.retentionCheckIntervalMs" to "86400000",
+        "audit.archiveDirectory" to "build/test-audit-archive"
     )
 }

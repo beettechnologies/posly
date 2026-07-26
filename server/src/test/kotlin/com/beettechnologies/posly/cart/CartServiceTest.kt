@@ -1,5 +1,6 @@
 package com.beettechnologies.posly.cart
 
+import com.beettechnologies.posly.TestDatabase
 import com.beettechnologies.posly.products.CreateProductRequest
 import com.beettechnologies.posly.products.ModifierRequest
 import com.beettechnologies.posly.products.ProductResult
@@ -9,6 +10,7 @@ import com.beettechnologies.posly.stores.CreateStoreResult
 import com.beettechnologies.posly.stores.StoreService
 import com.beettechnologies.posly.stores.TaxProfileService
 import com.beettechnologies.posly.stores.TaxRate
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -53,6 +55,11 @@ private class Harness(beforeCartCommitForTesting: (() -> Unit)? = null) {
 }
 
 class CartServiceTest {
+
+    @BeforeTest
+    fun resetDb() {
+        TestDatabase.reset()
+    }
 
     @Test
     fun `creating a cart for an unknown store is rejected`() {

@@ -1,5 +1,7 @@
 package com.beettechnologies.posly.cart
 
+import com.beettechnologies.posly.audit.AuditEvent
+import com.beettechnologies.posly.audit.AuditService
 import com.beettechnologies.posly.auth.ErrorResponse
 import com.beettechnologies.posly.inventory.InventoryService
 import com.beettechnologies.posly.model.Role
@@ -11,6 +13,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.Application
 import io.ktor.server.application.call
 import io.ktor.server.auth.authenticate
+import io.ktor.server.plugins.callid.callId
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
 import io.ktor.server.routing.get
@@ -106,7 +109,15 @@ fun Application.configureOrderRoutes(
                                     actorId = actorId
                                 )
                             ) {
-                                is ConfirmPaymentResult.Success -> call.respond(HttpStatusCode.OK, result.order.toResponse())
+                                is ConfirmPaymentResult.Success -> {
+                                    AuditService.record(
+                                        AuditEvent.ORDER_PAYMENT_CONFIRMED,
+                                        userId = actorId,
+                                        correlationId = call.callId,
+                                        detail = "orderId=$id method=${request.method}"
+                                    )
+                                    call.respond(HttpStatusCode.OK, result.order.toResponse())
+                                }
                                 ConfirmPaymentResult.OrderNotFound -> call.respond(
                                     HttpStatusCode.NotFound,
                                     ErrorResponse("Order not found")
@@ -153,6 +164,12 @@ fun Application.configureOrderRoutes(
                                 ) {
                                     is RefundOrderResult.Success -> {
                                         restock(inventoryService, result.order, lineItems, actorId)
+                                        AuditService.record(
+                                            AuditEvent.ORDER_REFUNDED,
+                                            userId = actorId,
+                                            correlationId = call.callId,
+                                            detail = "orderId=$id refundId=${request.refundId} method=CARD"
+                                        )
                                         call.respond(HttpStatusCode.OK, result.order.toResponse())
                                     }
                                     RefundOrderResult.OrderNotFound -> call.respond(HttpStatusCode.NotFound, ErrorResponse("Order not found"))
@@ -175,6 +192,12 @@ fun Application.configureOrderRoutes(
                                 when (val result = orderService.refund(id, request.refundId, "MANUAL", lineItems, request.reason, actorId)) {
                                     is RefundResult.Success -> {
                                         restock(inventoryService, result.order, lineItems, actorId)
+                                        AuditService.record(
+                                            AuditEvent.ORDER_REFUNDED,
+                                            userId = actorId,
+                                            correlationId = call.callId,
+                                            detail = "orderId=$id refundId=${request.refundId} method=MANUAL"
+                                        )
                                         call.respond(HttpStatusCode.OK, result.order.toResponse())
                                     }
                                     RefundResult.OrderNotFound -> call.respond(HttpStatusCode.NotFound, ErrorResponse("Order not found"))

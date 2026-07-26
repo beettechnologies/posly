@@ -1,8 +1,18 @@
 package com.beettechnologies.posly.audit
 
+import com.beettechnologies.posly.db.AuditTable
+import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.less
+import org.jetbrains.exposed.v1.jdbc.andWhere
+import org.jetbrains.exposed.v1.jdbc.deleteAll
+import org.jetbrains.exposed.v1.jdbc.deleteWhere
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.selectAll
+import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 import org.slf4j.LoggerFactory
 import java.time.Instant
-import java.util.Collections
+import java.util.UUID
 
 enum class AuditEvent {
     LOGIN_SUCCESS,
@@ -40,26 +50,52 @@ enum class AuditEvent {
     RESTORE_DRILL_FAILED,
     SECRET_ROTATED,
     FEATURE_FLAG_CREATED,
-    FEATURE_FLAG_UPDATED
+    FEATURE_FLAG_UPDATED,
+    ORDER_CREATED,
+    ORDER_PAYMENT_CONFIRMED,
+    ORDER_REFUNDED,
+    AUDIT_RETENTION_COMPLETED
 }
 
 data class AuditRecord(
+    val id: String = UUID.randomUUID().toString(),
     val timestamp: Instant,
     val event: AuditEvent,
     val username: String?,
     val userId: String?,
+    val deviceId: String? = null,
+    val correlationId: String? = null,
     val remoteIp: String?,
     val detail: String? = null
 )
 
+private fun rowToAuditRecord(row: ResultRow) = AuditRecord(
+    id = row[AuditTable.id],
+    timestamp = row[AuditTable.timestamp],
+    event = AuditEvent.valueOf(row[AuditTable.event]),
+    username = row[AuditTable.username],
+    userId = row[AuditTable.userId],
+    deviceId = row[AuditTable.deviceId],
+    correlationId = row[AuditTable.correlationId],
+    remoteIp = row[AuditTable.remoteIp],
+    detail = row[AuditTable.detail]
+)
+
+/**
+ * Exposed-backed since Ticket 40 (previously an in-memory list) - every call site across the
+ * codebase still just calls [record]/[list] statically, unchanged, following the same
+ * migrate-internals-only-keep-the-public-API pattern as [com.beettechnologies.posly.stores.TaxProfileService]
+ * and friends in the original database migration.
+ */
 object AuditService {
     private val log = LoggerFactory.getLogger("AUDIT")
-    private val records = Collections.synchronizedList(mutableListOf<AuditRecord>())
 
     fun record(
         event: AuditEvent,
         username: String? = null,
         userId: String? = null,
+        deviceId: String? = null,
+        correlationId: String? = null,
         remoteIp: String? = null,
         detail: String? = null
     ) {
@@ -68,22 +104,50 @@ object AuditService {
             event = event,
             username = username,
             userId = userId,
+            deviceId = deviceId,
+            correlationId = correlationId,
             remoteIp = remoteIp,
             detail = detail
         )
-        records.add(record)
-        log.info("[AUDIT] event={} username={} userId={} ip={} detail={}",
-            record.event, record.username, record.userId, record.remoteIp, record.detail)
+        transaction {
+            AuditTable.insert {
+                it[AuditTable.id] = record.id
+                it[AuditTable.timestamp] = record.timestamp
+                it[AuditTable.event] = record.event.name
+                it[AuditTable.username] = record.username
+                it[AuditTable.userId] = record.userId
+                it[AuditTable.deviceId] = record.deviceId
+                it[AuditTable.correlationId] = record.correlationId
+                it[AuditTable.remoteIp] = record.remoteIp
+                it[AuditTable.detail] = record.detail
+            }
+        }
+        log.info(
+            "[AUDIT] event={} username={} userId={} deviceId={} correlationId={} ip={} detail={}",
+            record.event, record.username, record.userId, record.deviceId, record.correlationId, record.remoteIp, record.detail
+        )
     }
 
-    /** Recent audit records, newest first - optionally filtered by user and/or event type. */
-    fun list(username: String? = null, event: AuditEvent? = null): List<AuditRecord> =
-        synchronized(records) {
-            records.filter { (username == null || it.username == username) && (event == null || it.event == event) }
-        }.sortedByDescending { it.timestamp }
+    /** Recent audit records, newest first - optionally filtered by user, event type, and/or correlation id. */
+    fun list(username: String? = null, event: AuditEvent? = null, correlationId: String? = null): List<AuditRecord> = transaction {
+        var query = AuditTable.selectAll()
+        if (username != null) query = query.andWhere { AuditTable.username eq username }
+        if (event != null) query = query.andWhere { AuditTable.event eq event.name }
+        if (correlationId != null) query = query.andWhere { AuditTable.correlationId eq correlationId }
+        query.map { rowToAuditRecord(it) }.sortedByDescending { it.timestamp }
+    }
+
+    /** Deletes every record timestamped strictly before [cutoff] and returns what was deleted, for the caller to archive. */
+    fun purgeOlderThan(cutoff: Instant): List<AuditRecord> = transaction {
+        val toDelete = AuditTable.selectAll().andWhere { AuditTable.timestamp less cutoff }.map { rowToAuditRecord(it) }
+        if (toDelete.isNotEmpty()) {
+            AuditTable.deleteWhere { AuditTable.timestamp less cutoff }
+        }
+        toDelete
+    }
 
     /** Test-only: clears recorded history without affecting the SLF4J log output. */
     internal fun clearForTests() {
-        synchronized(records) { records.clear() }
+        transaction { AuditTable.deleteAll() }
     }
 }

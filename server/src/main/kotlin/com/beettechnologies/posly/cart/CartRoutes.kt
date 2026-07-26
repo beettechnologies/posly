@@ -1,5 +1,7 @@
 package com.beettechnologies.posly.cart
 
+import com.beettechnologies.posly.audit.AuditEvent
+import com.beettechnologies.posly.audit.AuditService
 import com.beettechnologies.posly.auth.ErrorResponse
 import com.beettechnologies.posly.model.Role
 import com.beettechnologies.posly.rbac.tokenClaims
@@ -8,6 +10,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.Application
 import io.ktor.server.application.call
 import io.ktor.server.auth.authenticate
+import io.ktor.server.plugins.callid.callId
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
 import io.ktor.server.routing.delete
@@ -210,10 +213,20 @@ fun Application.configureCartRoutes(cartService: CartService) {
                         }
 
                         when (val result = cartService.checkout(call.parameters["id"]!!, request.idempotencyKey)) {
-                            is CheckoutResult.Success -> call.respond(
-                                if (result.replayed) HttpStatusCode.OK else HttpStatusCode.Created,
-                                result.order.toResponse()
-                            )
+                            is CheckoutResult.Success -> {
+                                if (!result.replayed) {
+                                    AuditService.record(
+                                        AuditEvent.ORDER_CREATED,
+                                        userId = call.tokenClaims()?.userId,
+                                        correlationId = call.callId,
+                                        detail = "orderId=${result.order.id}"
+                                    )
+                                }
+                                call.respond(
+                                    if (result.replayed) HttpStatusCode.OK else HttpStatusCode.Created,
+                                    result.order.toResponse()
+                                )
+                            }
                             CheckoutResult.CartNotFound -> call.respond(HttpStatusCode.NotFound, ErrorResponse("Cart not found"))
                             CheckoutResult.EmptyCart -> call.respond(
                                 HttpStatusCode.BadRequest,

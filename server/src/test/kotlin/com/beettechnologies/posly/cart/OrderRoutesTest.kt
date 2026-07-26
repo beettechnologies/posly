@@ -2,7 +2,8 @@ package com.beettechnologies.posly.cart
 
 import com.beettechnologies.posly.TestDatabase
 import com.beettechnologies.posly.TestDatabaseConfig
-
+import com.beettechnologies.posly.audit.AuditEvent
+import com.beettechnologies.posly.audit.AuditService
 import com.beettechnologies.posly.module
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
@@ -27,6 +28,7 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 
 private const val WEBHOOK_SECRET = "test-webhook-secret"
 
@@ -137,6 +139,28 @@ class OrderRoutesTest {
         val payments = body["payments"]!!.jsonArray
         assertEquals("CARD", payments.single().jsonObject["method"]?.jsonPrimitive?.content)
         assertEquals(0.0, body["remainingBalance"]?.jsonPrimitive?.content?.toDouble())
+    }
+
+    @Test
+    fun `confirming payment writes an ORDER_PAYMENT_CONFIRMED audit record with the actor and correlation id`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val adminTok = accessToken(client, "admin", "admin123")
+        val cashierTok = accessToken(client, "cashier", "cashier123")
+        val orderId = seedPendingOrder(client, adminTok, cashierTok)
+
+        client.post("/orders/$orderId/payments") {
+            header(HttpHeaders.Authorization, "Bearer $cashierTok")
+            header("X-Correlation-Id", "test-correlation-payment")
+            contentType(ContentType.Application.Json)
+            setBody("""{"method":"CARD","amount":10.0,"reference":"auth-123"}""")
+        }
+
+        val entries = AuditService.list(event = AuditEvent.ORDER_PAYMENT_CONFIRMED, correlationId = "test-correlation-payment")
+        assertEquals(1, entries.size)
+        val entry = entries.single()
+        assertEquals("orderId=$orderId method=CARD", entry.detail)
+        assertNotNull(entry.userId)
     }
 
     @Test
@@ -277,6 +301,37 @@ class OrderRoutesTest {
         assertEquals(HttpStatusCode.OK, resp.status)
         val body = Json.parseToJsonElement(resp.bodyAsText()).jsonObject
         assertEquals("REFUNDED", body["status"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `refunding writes an ORDER_REFUNDED audit record carrying the method, actor, and correlation id`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val adminTok = accessToken(client, "admin", "admin123")
+        val cashierTok = accessToken(client, "cashier", "cashier123")
+        val orderId = seedPendingOrder(client, adminTok, cashierTok)
+        client.post("/orders/$orderId/payments") {
+            header(HttpHeaders.Authorization, "Bearer $cashierTok")
+            contentType(ContentType.Application.Json)
+            setBody("""{"method":"CARD","amount":10.0}""")
+        }
+        val itemId = firstItemId(client, adminTok, orderId)
+
+        client.post("/orders/$orderId/refund") {
+            header(HttpHeaders.Authorization, "Bearer $adminTok")
+            header("X-Correlation-Id", "test-correlation-refund")
+            contentType(ContentType.Application.Json)
+            setBody(
+                """{"refundId":"refund-1","method":"MANUAL","reason":"Customer request",
+                    |"lineItems":[{"cartItemId":"$itemId","quantity":1}]}""".trimMargin()
+            )
+        }
+
+        val entries = AuditService.list(event = AuditEvent.ORDER_REFUNDED, correlationId = "test-correlation-refund")
+        assertEquals(1, entries.size)
+        val entry = entries.single()
+        assertEquals("orderId=$orderId refundId=refund-1 method=MANUAL", entry.detail)
+        assertNotNull(entry.userId)
     }
 
     @Test

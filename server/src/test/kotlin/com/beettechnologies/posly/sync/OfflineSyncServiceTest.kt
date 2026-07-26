@@ -1,7 +1,8 @@
 package com.beettechnologies.posly.sync
 
 import com.beettechnologies.posly.TestDatabase
-
+import com.beettechnologies.posly.audit.AuditEvent
+import com.beettechnologies.posly.audit.AuditService
 import com.beettechnologies.posly.cart.CartService
 import com.beettechnologies.posly.cart.OrderService
 import com.beettechnologies.posly.cart.OrderStatus
@@ -109,6 +110,24 @@ class OfflineSyncServiceTest {
         val order = h.orders.getOrder(result.record.orderId!!)!!
         assertEquals(OrderStatus.PAID, order.status)
         assertEquals(10.0, order.totals.total)
+    }
+
+    @Test
+    fun `a created offline sale writes an ORDER_CREATED audit record carrying the device id and correlation id`() {
+        val h = Harness()
+        h.seedProduct("SKU-1", price = 10.0)
+        val sale = h.sale("key-audit-1", listOf(h.item("SKU-1", unitPriceAtSale = 10.0)))
+
+        val result = (
+            h.sync.ingestBatch(h.device.clientId, h.device.clientSecret, ConflictPolicy.REJECT, listOf(sale), correlationId = "test-correlation-sync")
+                as IngestBatchResult.Success
+            ).results.single()
+
+        val entries = AuditService.list(event = AuditEvent.ORDER_CREATED, correlationId = "test-correlation-sync")
+        assertEquals(1, entries.size)
+        val entry = entries.single()
+        assertEquals(h.device.id, entry.deviceId)
+        assertEquals("orderId=${result.record.orderId} source=offline_sync outcome=CREATED", entry.detail)
     }
 
     @Test

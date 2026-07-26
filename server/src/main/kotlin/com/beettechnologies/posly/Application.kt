@@ -7,6 +7,8 @@ import com.beettechnologies.posly.auth.SsoConfigService
 import com.beettechnologies.posly.auth.UserService
 import com.beettechnologies.posly.auth.configureAuthRoutes
 import com.beettechnologies.posly.auth.configureUserRoutes
+import com.beettechnologies.posly.audit.AuditRetentionService
+import com.beettechnologies.posly.audit.configureAuditRoutes
 import com.beettechnologies.posly.backup.BackupService
 import com.beettechnologies.posly.backup.RestoreService
 import com.beettechnologies.posly.backup.configureBackupRoutes
@@ -145,6 +147,13 @@ fun Application.module() {
     val backupService = BackupService(jdbcUrl, backupDirectory, scope = this)
     val restoreService = RestoreService(backupService, productionJdbcUrl = jdbcUrl)
     val featureFlagService = FeatureFlagService(meterRegistry)
+    val auditConfig = environment.config.config("audit")
+    val auditRetentionService = AuditRetentionService(
+        archiveDirectory = auditConfig.property("archiveDirectory").getString(),
+        scope = this,
+        retentionDays = auditConfig.property("retentionDays").getString().toLong(),
+        checkIntervalMillis = auditConfig.property("retentionCheckIntervalMs").getString().toLong()
+    )
 
     install(ContentNegotiation) {
         json(Json { ignoreUnknownKeys = true })
@@ -218,4 +227,5 @@ fun Application.module() {
     configureBackupRoutes(backupService, restoreService)
     configureSecretsRoutes(secretsManager)
     configureFeatureFlagRoutes(featureFlagService)
+    configureAuditRoutes(auditRetentionService)
 }

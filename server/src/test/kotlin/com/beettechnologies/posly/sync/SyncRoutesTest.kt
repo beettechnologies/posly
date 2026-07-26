@@ -2,7 +2,8 @@ package com.beettechnologies.posly.sync
 
 import com.beettechnologies.posly.TestDatabase
 import com.beettechnologies.posly.TestDatabaseConfig
-
+import com.beettechnologies.posly.audit.AuditEvent
+import com.beettechnologies.posly.audit.AuditService
 import com.beettechnologies.posly.module
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
@@ -25,6 +26,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class SyncRoutesTest {
@@ -130,6 +132,31 @@ class SyncRoutesTest {
         val orderResp = client.get("/orders/$orderId") { header(HttpHeaders.Authorization, "Bearer $adminToken") }
         val order = Json.parseToJsonElement(orderResp.bodyAsText()).jsonObject
         assertEquals("PAID", order["status"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `a clean sale writes an ORDER_CREATED audit record carrying the device id and the request's correlation id`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val adminToken = accessToken(client, "admin", "admin123")
+        val storeId = seedStoreId(client, adminToken)
+        seedProductSku(client, adminToken, "SKU-1", 10.0)
+        val (clientId, clientSecret) = enrollDevice(client, adminToken, storeId)
+
+        val resp = client.post("/sync/offline-sales") {
+            contentType(ContentType.Application.Json)
+            header("X-Correlation-Id", "test-correlation-sync-route")
+            setBody(batchBody(clientId, clientSecret, "REJECT", listOf(saleBody("key-audit-1", "SKU-1", 10.0))))
+        }
+        assertEquals(HttpStatusCode.OK, resp.status)
+        val orderId = Json.parseToJsonElement(resp.bodyAsText()).jsonObject["results"]!!.jsonArray.single()
+            .jsonObject["orderId"]!!.jsonPrimitive.content
+
+        val entries = AuditService.list(event = AuditEvent.ORDER_CREATED, correlationId = "test-correlation-sync-route")
+        assertEquals(1, entries.size)
+        val entry = entries.single()
+        assertEquals("orderId=$orderId source=offline_sync outcome=CREATED", entry.detail)
+        assertNotNull(entry.deviceId)
     }
 
     @Test

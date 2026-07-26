@@ -1,6 +1,8 @@
 package com.beettechnologies.posly.devices
 
+import com.beettechnologies.posly.TestDatabase
 import java.time.Instant
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -8,6 +10,11 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class DeviceRegistryServiceTest {
+
+    @BeforeTest
+    fun resetDb() {
+        TestDatabase.reset()
+    }
 
     private fun enroll(
         service: DeviceRegistryService,

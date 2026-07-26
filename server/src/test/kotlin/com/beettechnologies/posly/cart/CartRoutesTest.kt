@@ -2,7 +2,8 @@ package com.beettechnologies.posly.cart
 
 import com.beettechnologies.posly.TestDatabase
 import com.beettechnologies.posly.TestDatabaseConfig
-
+import com.beettechnologies.posly.audit.AuditEvent
+import com.beettechnologies.posly.audit.AuditService
 import com.beettechnologies.posly.module
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
@@ -370,6 +371,45 @@ class CartRoutesTest {
             setBody("""{"idempotencyKey":"key-1"}""")
         }
         assertEquals(HttpStatusCode.BadRequest, resp.status)
+    }
+
+    @Test
+    fun `checkout writes a single audit record carrying the correlation id and actor, and a replay writes no second one`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val adminTok = accessToken(client, "admin", "admin123")
+        val storeId = seedStoreId(client, adminTok)
+        val productId = seedProductId(client, adminTok, price = 10.0)
+        val cashierTok = cashierToken(client)
+        val cartId = createCart(client, cashierTok, storeId)
+        client.post("/carts/$cartId/items") {
+            header(HttpHeaders.Authorization, "Bearer $cashierTok")
+            contentType(ContentType.Application.Json)
+            setBody("""{"productId":"$productId","quantity":1}""")
+        }
+
+        val checkoutResp = client.post("/carts/$cartId/checkout") {
+            header(HttpHeaders.Authorization, "Bearer $cashierTok")
+            header("X-Correlation-Id", "test-correlation-checkout")
+            contentType(ContentType.Application.Json)
+            setBody("""{"idempotencyKey":"audit-key-1"}""")
+        }
+        assertEquals(HttpStatusCode.Created, checkoutResp.status)
+        val orderId = Json.parseToJsonElement(checkoutResp.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
+
+        val auditEntries = AuditService.list(event = AuditEvent.ORDER_CREATED, correlationId = "test-correlation-checkout")
+        assertEquals(1, auditEntries.size)
+        val entry = auditEntries.single()
+        assertEquals("orderId=$orderId", entry.detail)
+        assertNotNull(entry.userId)
+
+        client.post("/carts/$cartId/checkout") {
+            header(HttpHeaders.Authorization, "Bearer $cashierTok")
+            header("X-Correlation-Id", "test-correlation-checkout")
+            contentType(ContentType.Application.Json)
+            setBody("""{"idempotencyKey":"audit-key-1"}""")
+        }
+        assertEquals(1, AuditService.list(event = AuditEvent.ORDER_CREATED, correlationId = "test-correlation-checkout").size)
     }
 
     @Test
