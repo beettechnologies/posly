@@ -30,3 +30,6 @@ data class MfaVerifyResponse(val accessToken: String, val refreshToken: String)
 
 @Serializable
 data class ErrorResponse(val error: String)
+
+@Serializable
+data class MeResponse(val userId: String?, val roles: List<String>)

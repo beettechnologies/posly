@@ -108,7 +108,7 @@ fun Application.configureAuthRoutes(authService: AuthService) {
                 }
                 get("/me") {
                     val claims = call.tokenClaims()
-                    call.respond(HttpStatusCode.OK, mapOf("userId" to claims?.userId, "roles" to claims?.roles?.map { it.name }))
+                    call.respond(HttpStatusCode.OK, MeResponse(userId = claims?.userId, roles = claims?.roles.orEmpty().map { it.name }))
                 }
             }
         }

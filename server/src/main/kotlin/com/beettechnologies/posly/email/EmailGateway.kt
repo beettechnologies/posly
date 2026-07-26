@@ -13,6 +13,9 @@ import java.util.concurrent.atomic.AtomicInteger
 interface EmailGateway {
     /** Sends an email with [pdfBytes] attached to [recipient]; returns the provider's message id. */
     suspend fun sendReceipt(recipient: String, subject: String, pdfBytes: ByteArray): String
+
+    /** Sends a plain-text/HTML email (no attachment) to [recipient] - e.g. an account invite. Returns the provider's message id. */
+    suspend fun sendPlainText(recipient: String, subject: String, body: String): String
 }
 
 /**
@@ -28,7 +31,13 @@ class SimulatorEmailGateway(
 
     private val attempts = AtomicInteger(0)
 
-    override suspend fun sendReceipt(recipient: String, subject: String, pdfBytes: ByteArray): String {
+    override suspend fun sendReceipt(recipient: String, subject: String, pdfBytes: ByteArray): String =
+        simulateSend(recipient)
+
+    override suspend fun sendPlainText(recipient: String, subject: String, body: String): String =
+        simulateSend(recipient)
+
+    private fun simulateSend(recipient: String): String {
         if (recipient.contains("+bounce")) {
             throw GatewayException("Simulated permanent bounce for $recipient")
         }

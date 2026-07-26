@@ -16,10 +16,13 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.savedstate.read
+import com.beettechnologies.posly.admin.SsoConfigScreen
 import com.beettechnologies.posly.admin.StoreFormScreen
 import com.beettechnologies.posly.admin.StoreListScreen
 import com.beettechnologies.posly.admin.TaxProfileFormScreen
 import com.beettechnologies.posly.admin.TaxProfileListScreen
+import com.beettechnologies.posly.admin.UserFormScreen
+import com.beettechnologies.posly.admin.UserListScreen
 import com.beettechnologies.posly.devices.DeviceCredentialsStore
 import com.beettechnologies.posly.devices.DeviceListScreen
 import com.beettechnologies.posly.devices.DevicePairingAdminScreen
@@ -31,6 +34,7 @@ import org.koin.compose.koinInject
 
 private const val ROUTE_PAIRING = "pairing"
 private const val ROUTE_LOGIN = "login"
+private const val ROUTE_ACCEPT_INVITE = "acceptInvite"
 private const val ROUTE_MFA = "mfa"
 private const val ROUTE_DASHBOARD = "dashboard"
 private const val ROUTE_STORES = "stores"
@@ -44,6 +48,10 @@ private const val ROUTE_DEVICE_LIST = "deviceList"
 private const val ROUTE_SALE = "sale"
 private const val ROUTE_REFUNDS = "refunds"
 private const val ROUTE_SHIFT = "shift"
+private const val ROUTE_USERS = "users"
+private const val ROUTE_USER_FORM = "userForm"
+private const val ROUTE_USER_FORM_EDIT = "userForm/{id}"
+private const val ROUTE_SSO_CONFIG = "ssoConfig"
 
 /**
  * Single navigation surface for the auth flow, driven reactively by
@@ -112,7 +120,18 @@ fun AuthNavHost(
                 }
             )
         }
-        composable(ROUTE_LOGIN) { LoginScreen(onPairDevice = { navController.navigate(ROUTE_PAIRING) }) }
+        composable(ROUTE_LOGIN) {
+            LoginScreen(
+                onPairDevice = { navController.navigate(ROUTE_PAIRING) },
+                onAcceptInvite = { navController.navigate(ROUTE_ACCEPT_INVITE) }
+            )
+        }
+        composable(ROUTE_ACCEPT_INVITE) {
+            AcceptInviteScreen(
+                onAccepted = { navController.popBackStack() },
+                onBack = { navController.popBackStack() }
+            )
+        }
         composable(ROUTE_MFA) { MfaScreen() }
         composable(ROUTE_DASHBOARD) {
             DashboardScreen(
@@ -122,7 +141,8 @@ fun AuthNavHost(
                 onPairDevice = { navController.navigate(ROUTE_DEVICE_PAIRING_ADMIN) },
                 onManageDevices = { navController.navigate(ROUTE_DEVICE_LIST) },
                 onManageRefunds = { navController.navigate(ROUTE_REFUNDS) },
-                onManageShift = { navController.navigate(ROUTE_SHIFT) }
+                onManageShift = { navController.navigate(ROUTE_SHIFT) },
+                onManageUsers = { navController.navigate(ROUTE_USERS) }
             )
         }
         composable(ROUTE_SALE) {
@@ -183,6 +203,32 @@ fun AuthNavHost(
                 onSaved = { navController.popBackStack() },
                 onBack = { navController.popBackStack() }
             )
+        }
+
+        composable(ROUTE_USERS) {
+            UserListScreen(
+                onInviteUser = { navController.navigate(ROUTE_USER_FORM) },
+                onEditUser = { id -> navController.navigate("userForm/$id") },
+                onConfigureSso = { navController.navigate(ROUTE_SSO_CONFIG) },
+                onBack = { navController.popBackStack() }
+            )
+        }
+        composable(ROUTE_USER_FORM) {
+            UserFormScreen(
+                userId = null,
+                onDone = { navController.popBackStack() },
+                onBack = { navController.popBackStack() }
+            )
+        }
+        composable(ROUTE_USER_FORM_EDIT) { backStackEntry ->
+            UserFormScreen(
+                userId = backStackEntry.arguments?.read { getStringOrNull("id") },
+                onDone = { navController.popBackStack() },
+                onBack = { navController.popBackStack() }
+            )
+        }
+        composable(ROUTE_SSO_CONFIG) {
+            SsoConfigScreen(onBack = { navController.popBackStack() })
         }
     }
 }

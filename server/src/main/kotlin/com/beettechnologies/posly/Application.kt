@@ -5,8 +5,10 @@ import com.auth0.jwt.algorithms.Algorithm
 import com.beettechnologies.posly.auth.AuthService
 import com.beettechnologies.posly.auth.ErrorResponse
 import com.beettechnologies.posly.auth.JwtService
+import com.beettechnologies.posly.auth.SsoConfigService
 import com.beettechnologies.posly.auth.UserService
 import com.beettechnologies.posly.auth.configureAuthRoutes
+import com.beettechnologies.posly.auth.configureUserRoutes
 import com.beettechnologies.posly.cart.CartService
 import com.beettechnologies.posly.cart.OrderService
 import com.beettechnologies.posly.cart.configureCartRoutes
@@ -20,6 +22,7 @@ import com.beettechnologies.posly.inventory.InventoryService
 import com.beettechnologies.posly.inventory.StockCountService
 import com.beettechnologies.posly.inventory.configureInventoryRoutes
 import com.beettechnologies.posly.inventory.configureStockCountRoutes
+import com.beettechnologies.posly.model.UserStatus
 import com.beettechnologies.posly.observability.configureObservability
 import com.beettechnologies.posly.payments.PaymentGatewayService
 import com.beettechnologies.posly.payments.SimulatorPaymentGateway
@@ -70,7 +73,8 @@ fun Application.module() {
 
     val jwtService = JwtService(jwtSecret, jwtIssuer, jwtAudience, accessExpMs, refreshExpMs, mfaExpMs)
     val userService = UserService()
-    val authService = AuthService(userService, jwtService)
+    val ssoConfigService = SsoConfigService()
+    val authService = AuthService(userService, jwtService, ssoConfigService = ssoConfigService)
     val deviceRegistryService = DeviceRegistryService()
     val productService = ProductService()
     val taxProfileService = TaxProfileService()
@@ -117,7 +121,16 @@ fun Application.module() {
                     .build()
             )
             validate { credential ->
-                if (credential.payload.subject != null) JWTPrincipal(credential.payload) else null
+                // A live check, not just a signature/expiry check: re-reads the user's CURRENT
+                // status and roleVersion on every request, so a role change or account disable
+                // invalidates every access token already issued for that user immediately, rather
+                // than waiting for it to expire or for the client to refresh.
+                val userId = credential.payload.subject ?: return@validate null
+                val user = userService.findById(userId) ?: return@validate null
+                if (user.status != UserStatus.ACTIVE) return@validate null
+                val tokenRoleVersion = credential.payload.getClaim("roleVersion").asInt() ?: 0
+                if (tokenRoleVersion != user.roleVersion) return@validate null
+                JWTPrincipal(credential.payload)
             }
             challenge { _, _ ->
                 call.respond(HttpStatusCode.Unauthorized, ErrorResponse("Missing or invalid access token"))
@@ -135,6 +148,7 @@ fun Application.module() {
     }
 
     configureAuthRoutes(authService)
+    configureUserRoutes(authService, userService, ssoConfigService)
     configureDeviceRoutes(deviceRegistryService)
     configureProductRoutes(productService)
     configureSearchRoutes(productService)

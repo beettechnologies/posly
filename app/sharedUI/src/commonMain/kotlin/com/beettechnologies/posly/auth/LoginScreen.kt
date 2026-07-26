@@ -33,11 +33,13 @@ object LoginScreenTags {
     const val SUBMIT_BUTTON = "login_submit_button"
     const val ERROR_TEXT = "login_error_text"
     const val PAIR_DEVICE_BUTTON = "login_pair_device_button"
+    const val ACCEPT_INVITE_BUTTON = "login_accept_invite_button"
 }
 
 @Composable
 fun LoginScreen(
     onPairDevice: () -> Unit = {},
+    onAcceptInvite: () -> Unit = {},
     viewModel: LoginViewModel = koinViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -108,6 +110,13 @@ fun LoginScreen(
             modifier = Modifier.padding(top = 12.dp).testTag(LoginScreenTags.PAIR_DEVICE_BUTTON)
         ) {
             Text("Pair this device")
+        }
+
+        TextButton(
+            onClick = onAcceptInvite,
+            modifier = Modifier.testTag(LoginScreenTags.ACCEPT_INVITE_BUTTON)
+        ) {
+            Text("Have an invite link?")
         }
     }
 }

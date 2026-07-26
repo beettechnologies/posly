@@ -1,9 +1,12 @@
 package com.beettechnologies.posly.auth
 
+import com.beettechnologies.posly.admin.SsoConfigViewModel
 import com.beettechnologies.posly.admin.StoreFormViewModel
 import com.beettechnologies.posly.admin.StoreListViewModel
 import com.beettechnologies.posly.admin.TaxProfileFormViewModel
 import com.beettechnologies.posly.admin.TaxProfileListViewModel
+import com.beettechnologies.posly.admin.UserFormViewModel
+import com.beettechnologies.posly.admin.UserListViewModel
 import com.beettechnologies.posly.devices.DeviceListViewModel
 import com.beettechnologies.posly.devices.DevicePairingAdminViewModel
 import com.beettechnologies.posly.devices.PairingViewModel
@@ -33,4 +36,8 @@ val sharedUiModule: Module = module {
     viewModel { ReceiptViewModel(get()) }
     viewModel { RefundViewModel(get()) }
     viewModel { ShiftViewModel(get(), get()) }
+    viewModel { UserListViewModel(get()) }
+    viewModel { UserFormViewModel(get(), get()) }
+    viewModel { SsoConfigViewModel(get()) }
+    viewModel { AcceptInviteViewModel(get()) }
 }
