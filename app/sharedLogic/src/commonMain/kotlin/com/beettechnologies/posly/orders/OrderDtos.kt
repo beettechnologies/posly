@@ -16,8 +16,18 @@ data class PaymentRecordResponse(
 )
 
 @Serializable
+data class RefundLineItemResponse(
+    val cartItemId: String,
+    val quantity: Int,
+    val amount: Double,
+    val restock: Boolean
+)
+
+@Serializable
 data class RefundRecordResponse(
     val refundId: String,
+    val method: String,
+    val lineItems: List<RefundLineItemResponse> = emptyList(),
     val amount: Double,
     val reason: String?,
     val refundedBy: String?,
@@ -38,7 +48,9 @@ data class OrderResponse(
     val payments: List<PaymentRecordResponse> = emptyList(),
     val amountPaid: Double = 0.0,
     val remainingBalance: Double = 0.0,
-    val refund: RefundRecordResponse? = null
+    val refunds: List<RefundRecordResponse> = emptyList(),
+    val amountRefunded: Double = 0.0,
+    val remainingRefundable: Double = 0.0
 )
 
 @Serializable
@@ -46,4 +58,19 @@ data class ConfirmPaymentRequest(
     val method: String,
     val amount: Double,
     val reference: String? = null
+)
+
+@Serializable
+data class RefundLineItemRequest(
+    val cartItemId: String,
+    val quantity: Int,
+    val restock: Boolean = false
+)
+
+@Serializable
+data class RefundRequest(
+    val refundId: String,
+    val method: String,
+    val lineItems: List<RefundLineItemRequest>,
+    val reason: String? = null
 )

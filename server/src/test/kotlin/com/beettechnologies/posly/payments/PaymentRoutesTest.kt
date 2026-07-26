@@ -219,7 +219,11 @@ class PaymentRoutesTest {
     }
 
     @Test
-    fun `refunding an approved payment refunds the order`() = testApplication {
+    fun `refunding an approved payment via the legacy endpoint updates only the gateway record`() = testApplication {
+        // POST /payments/{id}/refund is a lower-level, line-item-agnostic operation: it refunds the
+        // gateway/payment record but does not finalize the order. Order-level finalization (status,
+        // restock, refund history) is exclusively driven by the unified POST /orders/{id}/refund
+        // endpoint, exercised in OrderRoutesTest.
         configureApp()
         val client = jsonClient()
         val adminTok = accessToken(client, "admin", "admin123")
@@ -241,7 +245,7 @@ class PaymentRoutesTest {
         val orderResp = client.get("/orders/$orderId") {
             header(HttpHeaders.Authorization, "Bearer $adminTok")
         }
-        assertEquals("REFUNDED", Json.parseToJsonElement(orderResp.bodyAsText()).jsonObject["status"]?.jsonPrimitive?.content)
+        assertEquals("PAID", Json.parseToJsonElement(orderResp.bodyAsText()).jsonObject["status"]?.jsonPrimitive?.content)
     }
 
     @Test

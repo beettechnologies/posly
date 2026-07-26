@@ -1,7 +1,10 @@
 package com.beettechnologies.posly.cart
 
 import com.beettechnologies.posly.auth.ErrorResponse
+import com.beettechnologies.posly.inventory.InventoryService
 import com.beettechnologies.posly.model.Role
+import com.beettechnologies.posly.payments.PaymentGatewayService
+import com.beettechnologies.posly.payments.RefundOrderResult
 import com.beettechnologies.posly.rbac.tokenClaims
 import com.beettechnologies.posly.rbac.withRole
 import io.ktor.http.HttpStatusCode
@@ -15,7 +18,31 @@ import io.ktor.server.routing.post
 import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
 
-fun Application.configureOrderRoutes(orderService: OrderService) {
+private val REFUND_METHODS = setOf("CARD", "MANUAL")
+
+private fun restock(
+    inventoryService: InventoryService,
+    order: Order,
+    lineItems: List<RefundLineItemInput>,
+    actorId: String?
+) {
+    lineItems.filter { it.restock }.forEach { line ->
+        val item = order.items.find { it.id == line.cartItemId } ?: return@forEach
+        inventoryService.adjustStock(
+            productId = item.productId,
+            storeId = order.storeId,
+            delta = line.quantity,
+            reason = "Refund restock",
+            actorId = actorId
+        )
+    }
+}
+
+fun Application.configureOrderRoutes(
+    orderService: OrderService,
+    paymentGatewayService: PaymentGatewayService,
+    inventoryService: InventoryService
+) {
     routing {
         authenticate("jwt-auth") {
             route("/orders/{id}") {
@@ -87,19 +114,60 @@ fun Application.configureOrderRoutes(orderService: OrderService) {
                             call.respond(HttpStatusCode.BadRequest, ErrorResponse("refundId is required"))
                             return@post
                         }
+                        val method = request.method.uppercase()
+                        if (method !in REFUND_METHODS) {
+                            call.respond(HttpStatusCode.BadRequest, ErrorResponse("method must be CARD or MANUAL"))
+                            return@post
+                        }
+                        if (method == "MANUAL" && request.reason.isNullOrBlank()) {
+                            call.respond(HttpStatusCode.BadRequest, ErrorResponse("reason is required for a manual refund"))
+                            return@post
+                        }
 
                         val actorId = call.tokenClaims()?.userId
-                        when (val result = orderService.refund(id, request.refundId, request.reason, actorId)) {
-                            is RefundResult.Success -> call.respond(HttpStatusCode.OK, result.order.toResponse())
-                            RefundResult.OrderNotFound -> call.respond(HttpStatusCode.NotFound, ErrorResponse("Order not found"))
-                            RefundResult.NotPaid -> call.respond(
-                                HttpStatusCode.Conflict,
-                                ErrorResponse("Only a paid order can be refunded")
-                            )
-                            RefundResult.AlreadyRefunded -> call.respond(
-                                HttpStatusCode.Conflict,
-                                ErrorResponse("Order has already been refunded with a different refundId")
-                            )
+                        val lineItems = request.lineItems.map { RefundLineItemInput(it.cartItemId, it.quantity, it.restock) }
+
+                        if (method == "CARD") {
+                            when (
+                                val result = paymentGatewayService.refundOrder(id, request.refundId, lineItems, request.reason, actorId)
+                            ) {
+                                is RefundOrderResult.Success -> {
+                                    restock(inventoryService, result.order, lineItems, actorId)
+                                    call.respond(HttpStatusCode.OK, result.order.toResponse())
+                                }
+                                RefundOrderResult.OrderNotFound -> call.respond(HttpStatusCode.NotFound, ErrorResponse("Order not found"))
+                                RefundOrderResult.NoApprovedCardPayment -> call.respond(
+                                    HttpStatusCode.Conflict,
+                                    ErrorResponse("No approved card payment was found for this order")
+                                )
+                                RefundOrderResult.NotRefundable -> call.respond(
+                                    HttpStatusCode.Conflict,
+                                    ErrorResponse("Order has nothing left to refund")
+                                )
+                                RefundOrderResult.RefundWindowExpired -> call.respond(
+                                    HttpStatusCode.Conflict,
+                                    ErrorResponse("The refund window for this order has expired")
+                                )
+                                is RefundOrderResult.InvalidLineItem -> call.respond(HttpStatusCode.BadRequest, ErrorResponse(result.message))
+                                is RefundOrderResult.GatewayError -> call.respond(HttpStatusCode.BadGateway, ErrorResponse(result.message))
+                            }
+                        } else {
+                            when (val result = orderService.refund(id, request.refundId, "MANUAL", lineItems, request.reason, actorId)) {
+                                is RefundResult.Success -> {
+                                    restock(inventoryService, result.order, lineItems, actorId)
+                                    call.respond(HttpStatusCode.OK, result.order.toResponse())
+                                }
+                                RefundResult.OrderNotFound -> call.respond(HttpStatusCode.NotFound, ErrorResponse("Order not found"))
+                                RefundResult.NotRefundable -> call.respond(
+                                    HttpStatusCode.Conflict,
+                                    ErrorResponse("Order has nothing left to refund")
+                                )
+                                RefundResult.RefundWindowExpired -> call.respond(
+                                    HttpStatusCode.Conflict,
+                                    ErrorResponse("The refund window for this order has expired")
+                                )
+                                is RefundResult.InvalidLineItem -> call.respond(HttpStatusCode.BadRequest, ErrorResponse(result.message))
+                            }
                         }
                     }
                 }

@@ -59,7 +59,7 @@ data class Cart(
     val updatedAt: Instant
 )
 
-private val TAXABLE_CATEGORIES = setOf(TaxCategory.STANDARD, TaxCategory.REDUCED)
+internal val TAXABLE_CATEGORIES = setOf(TaxCategory.STANDARD, TaxCategory.REDUCED)
 
 data class TaxBreakdownLine(val name: String, val ratePercent: Double, val amount: Double)
 
@@ -105,7 +105,7 @@ fun computeTotals(cart: Cart, calculateTax: (Double) -> Pair<List<TaxBreakdownLi
     )
 }
 
-enum class OrderStatus { PENDING, PAID, REFUNDED }
+enum class OrderStatus { PENDING, PAID, PARTIALLY_REFUNDED, REFUNDED }
 
 data class PaymentRecord(
     val method: String,
@@ -116,8 +116,19 @@ data class PaymentRecord(
     val maskedCardNumber: String? = null
 )
 
+/** One refunded cart line within a [RefundRecord] - [amount] already includes this line's fair share of order tax. */
+data class RefundLineItem(
+    val cartItemId: String,
+    val quantity: Int,
+    val amount: Double,
+    val restock: Boolean
+)
+
 data class RefundRecord(
     val refundId: String,
+    /** "CARD" (via the payment gateway) or "MANUAL" (cashier/manager asserting they handled it outside the system). */
+    val method: String,
+    val lineItems: List<RefundLineItem>,
     val amount: Double,
     val reason: String?,
     val refundedBy: String?,
@@ -137,10 +148,17 @@ data class Order(
     val status: OrderStatus = OrderStatus.PENDING,
     /** One entry per tender applied - a split payment accumulates more than one before the order reaches PAID. */
     val payments: List<PaymentRecord> = emptyList(),
-    val refund: RefundRecord? = null
+    /** One entry per refund event - partial refunds accumulate until remainingRefundable reaches zero. */
+    val refunds: List<RefundRecord> = emptyList()
 ) {
     val amountPaid: Double get() = roundCents(payments.sumOf { it.amount })
     val remainingBalance: Double get() = roundCents(totals.total - amountPaid)
+    val amountRefunded: Double get() = roundCents(refunds.sumOf { it.amount })
+    val remainingRefundable: Double get() = roundCents(amountPaid - amountRefunded)
+
+    /** How many units of this cart line have already been refunded across all prior refund events. */
+    fun refundedQuantityFor(cartItemId: String): Int =
+        refunds.flatMap { it.lineItems }.filter { it.cartItemId == cartItemId }.sumOf { it.quantity }
 }
 
 enum class OrderEventType { CREATED, PAYMENT_CONFIRMED, REFUNDED }

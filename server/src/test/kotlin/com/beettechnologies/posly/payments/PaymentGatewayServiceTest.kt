@@ -6,6 +6,7 @@ import com.beettechnologies.posly.cart.CartTotals
 import com.beettechnologies.posly.cart.Order
 import com.beettechnologies.posly.cart.OrderService
 import com.beettechnologies.posly.cart.OrderStatus
+import com.beettechnologies.posly.cart.RefundLineItemInput
 import com.beettechnologies.posly.gateway.GatewayException
 import com.beettechnologies.posly.gateway.RetryPolicy
 import com.beettechnologies.posly.products.TaxCategory
@@ -177,7 +178,11 @@ class PaymentGatewayServiceTest {
     }
 
     @Test
-    fun `refunding an approved payment transitions it and refunds the order`() = runBlocking {
+    fun `refunding an approved payment transitions its gateway record without finalizing the order`() = runBlocking {
+        // refund() is a payment/gateway-record-only operation; order finalization is the
+        // responsibility of refundOrder(), which is what the unified /orders/{id}/refund
+        // endpoint calls. This lower-level method stays reachable for the legacy
+        // /payments/{id}/refund route, which has no concept of order line items.
         val (service, orderService) = newService()
         val order = seedOrder(orderService)
         val payment = (service.createPayment(order.id, 10.0, "USD") as CreatePaymentResult.Success).payment
@@ -188,7 +193,7 @@ class PaymentGatewayServiceTest {
         val success = assertIs<RefundPaymentResult.Success>(result)
         assertEquals(GatewayPaymentStatus.REFUNDED, success.payment.status)
         assertEquals("refund-1", success.payment.refundId)
-        assertEquals(OrderStatus.REFUNDED, orderService.getOrder(order.id)?.status)
+        assertEquals(OrderStatus.PAID, orderService.getOrder(order.id)?.status)
     }
 
     @Test
@@ -328,7 +333,7 @@ class PaymentGatewayServiceTest {
 
         assertTrue(service.listUnresolvedRefunds().isEmpty(), "a since-succeeded retry must no longer be unresolved")
         assertEquals(GatewayPaymentStatus.REFUNDED, retryResult.payment.status)
-        assertEquals(OrderStatus.REFUNDED, orderService.getOrder(order.id)?.status)
+        assertEquals(OrderStatus.PAID, orderService.getOrder(order.id)?.status)
     }
 
     @Test
@@ -341,5 +346,95 @@ class PaymentGatewayServiceTest {
         service.refund(payment.id, "refund-1", 10.0)
 
         assertTrue(service.listUnresolvedRefunds().isEmpty())
+    }
+
+    @Test
+    fun `refundOrder locates the order's approved card payment, refunds it, and finalizes the order`() = runBlocking {
+        val (service, orderService) = newService()
+        val order = seedOrder(orderService)
+        val itemId = order.items.single().id
+        val payment = (service.createPayment(order.id, 10.0, "USD") as CreatePaymentResult.Success).payment
+        service.handleWebhook("evt-1", payment.terminalTransactionId, approved = true, declineReason = null)
+
+        val result = service.refundOrder(
+            order.id, "refund-1", listOf(RefundLineItemInput(itemId, quantity = 1)), reason = null, actorId = "manager-1"
+        )
+
+        val success = assertIs<RefundOrderResult.Success>(result)
+        assertEquals(GatewayPaymentStatus.REFUNDED, success.payment.status)
+        assertEquals(OrderStatus.REFUNDED, success.order.status)
+        assertEquals(0.0, success.order.remainingRefundable)
+    }
+
+    @Test
+    fun `refundOrder replays idempotently for a repeated refundId`() = runBlocking {
+        val (service, orderService) = newService()
+        val order = seedOrder(orderService)
+        val itemId = order.items.single().id
+        val payment = (service.createPayment(order.id, 10.0, "USD") as CreatePaymentResult.Success).payment
+        service.handleWebhook("evt-1", payment.terminalTransactionId, approved = true, declineReason = null)
+        val lineItems = listOf(RefundLineItemInput(itemId, quantity = 1))
+
+        val first = assertIs<RefundOrderResult.Success>(service.refundOrder(order.id, "refund-1", lineItems, null, "manager-1"))
+        val second = assertIs<RefundOrderResult.Success>(service.refundOrder(order.id, "refund-1", lineItems, null, "manager-1"))
+
+        assertEquals(first.payment.id, second.payment.id)
+        assertEquals(first.order, second.order)
+        assertEquals(1, orderService.getOrder(order.id)?.refunds?.size)
+    }
+
+    @Test
+    fun `refundOrder rejects an order with no approved card payment`() = runBlocking {
+        val (service, orderService) = newService()
+        val order = seedOrder(orderService)
+        val itemId = order.items.single().id
+
+        val result = service.refundOrder(order.id, "refund-1", listOf(RefundLineItemInput(itemId, quantity = 1)), null, "manager-1")
+
+        assertEquals(RefundOrderResult.NoApprovedCardPayment, result)
+    }
+
+    @Test
+    fun `refundOrder rejects an order that is not yet fully paid`() = runBlocking {
+        val (service, orderService) = newService()
+        val order = seedOrder(orderService)
+        val itemId = order.items.single().id
+        // A partial card tender leaves the order PENDING even though this one payment is APPROVED.
+        val payment = (service.createPayment(order.id, 4.0, "USD") as CreatePaymentResult.Success).payment
+        service.handleWebhook("evt-1", payment.terminalTransactionId, approved = true, declineReason = null)
+        assertEquals(OrderStatus.PENDING, orderService.getOrder(order.id)?.status)
+
+        val result = service.refundOrder(order.id, "refund-1", listOf(RefundLineItemInput(itemId, quantity = 1)), null, "manager-1")
+
+        assertEquals(RefundOrderResult.NotRefundable, result)
+    }
+
+    @Test
+    fun `refundOrder rejects a line item requesting more than the available quantity`() = runBlocking {
+        val (service, orderService) = newService()
+        val order = seedOrder(orderService)
+        val itemId = order.items.single().id
+        val payment = (service.createPayment(order.id, 10.0, "USD") as CreatePaymentResult.Success).payment
+        service.handleWebhook("evt-1", payment.terminalTransactionId, approved = true, declineReason = null)
+
+        val result = service.refundOrder(order.id, "refund-1", listOf(RefundLineItemInput(itemId, quantity = 2)), null, "manager-1")
+
+        assertIs<RefundOrderResult.InvalidLineItem>(result)
+        assertEquals(OrderStatus.PAID, orderService.getOrder(order.id)?.status)
+    }
+
+    @Test
+    fun `refundOrder surfaces a persistent gateway failure without finalizing the order`() = runBlocking {
+        val (service, orderService) = newService(gateway = AlwaysFailingRefundGateway())
+        val order = seedOrder(orderService)
+        val itemId = order.items.single().id
+        val payment = (service.createPayment(order.id, 10.0, "USD") as CreatePaymentResult.Success).payment
+        service.handleWebhook("evt-1", payment.terminalTransactionId, approved = true, declineReason = null)
+
+        val result = service.refundOrder(order.id, "refund-1", listOf(RefundLineItemInput(itemId, quantity = 1)), null, "manager-1")
+
+        assertIs<RefundOrderResult.GatewayError>(result)
+        assertEquals(OrderStatus.PAID, orderService.getOrder(order.id)?.status)
+        assertTrue(orderService.getOrder(order.id)?.refunds.isNullOrEmpty())
     }
 }

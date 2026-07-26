@@ -2,6 +2,7 @@ package com.beettechnologies.posly.cart
 
 import com.beettechnologies.posly.products.TaxCategory
 import java.time.Instant
+import java.time.temporal.ChronoUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -10,7 +11,7 @@ import kotlin.test.assertTrue
 
 class OrderServiceTest {
 
-    private fun seedCart(storeId: String = "store-1"): Cart {
+    private fun seedCart(storeId: String = "store-1", quantity: Int = 1): Cart {
         val now = Instant.parse("2026-01-01T00:00:00Z")
         return Cart(
             id = "cart-1",
@@ -20,7 +21,7 @@ class OrderServiceTest {
                 CartItem(
                     productId = "product-1",
                     productName = "Widget",
-                    quantity = 1,
+                    quantity = quantity,
                     unitPrice = 10.0,
                     taxCategory = TaxCategory.STANDARD
                 )
@@ -35,6 +36,12 @@ class OrderServiceTest {
         taxableAmount = 10.0, taxBreakdown = emptyList(), totalTax = 0.0, total = 10.0
     )
 
+    /** A two-unit cart (subtotal 20) with a flat 10% tax, so tax proration math is non-trivial to verify. */
+    private fun seedTaxedTotals() = CartTotals(
+        subtotal = 20.0, itemDiscountTotal = 0.0, cartDiscountAmount = 0.0,
+        taxableAmount = 20.0, taxBreakdown = emptyList(), totalTax = 2.0, total = 22.0
+    )
+
     @Test
     fun `a newly created order starts pending with no payment or refund`() {
         val service = OrderService()
@@ -42,7 +49,8 @@ class OrderServiceTest {
 
         assertEquals(OrderStatus.PENDING, order.status)
         assertTrue(order.payments.isEmpty())
-        assertNull(order.refund)
+        assertTrue(order.refunds.isEmpty())
+        assertEquals(0.0, order.amountRefunded)
         assertEquals(1, service.listEvents(order.id).size)
         assertEquals(OrderEventType.CREATED, service.listEvents(order.id).single().type)
     }
@@ -163,20 +171,30 @@ class OrderServiceTest {
     }
 
     @Test
-    fun `refunding a paid order transitions to refunded and records the refund`() {
+    fun `refunding a paid order in full transitions to refunded and records the refund`() {
         val service = OrderService()
         val order = service.createOrder(seedCart(), seedTotals(), "key-1")
         service.confirmPayment(order.id, "CARD", 10.0, null, "cashier-1")
+        val itemId = order.items.single().id
 
-        val result = service.refund(order.id, "refund-1", reason = "Customer changed their mind", actorId = "manager-1")
+        val result = service.refund(
+            order.id, "refund-1", "MANUAL",
+            listOf(RefundLineItemInput(itemId, quantity = 1)),
+            reason = "Customer changed their mind", actorId = "manager-1"
+        )
 
         val success = assertIs<RefundResult.Success>(result)
         assertEquals(false, success.replayed)
         assertEquals(OrderStatus.REFUNDED, success.order.status)
-        assertEquals("refund-1", success.order.refund?.refundId)
-        assertEquals(10.0, success.order.refund?.amount)
-        assertEquals("Customer changed their mind", success.order.refund?.reason)
-        assertEquals("manager-1", success.order.refund?.refundedBy)
+        assertEquals(10.0, success.order.amountRefunded)
+        assertEquals(0.0, success.order.remainingRefundable)
+        val refund = success.order.refunds.single()
+        assertEquals("refund-1", refund.refundId)
+        assertEquals("MANUAL", refund.method)
+        assertEquals(10.0, refund.amount)
+        assertEquals("Customer changed their mind", refund.reason)
+        assertEquals("manager-1", refund.refundedBy)
+        assertEquals(listOf(itemId), refund.lineItems.map { it.cartItemId })
 
         val events = service.listEvents(order.id)
         assertEquals(
@@ -186,13 +204,96 @@ class OrderServiceTest {
     }
 
     @Test
+    fun `partially refunding one unit of a two-unit line leaves the order partially refunded with prorated tax`() {
+        val service = OrderService()
+        val order = service.createOrder(seedCart(quantity = 2), seedTaxedTotals(), "key-1")
+        service.confirmPayment(order.id, "CARD", 22.0, null, "cashier-1")
+        val itemId = order.items.single().id
+
+        val preview = service.previewRefund(order.id, listOf(RefundLineItemInput(itemId, quantity = 1)))
+        val previewSuccess = assertIs<RefundPreviewResult.Success>(preview)
+        assertEquals(11.0, previewSuccess.amount)
+        // previewRefund must not mutate the order.
+        assertEquals(OrderStatus.PAID, service.getOrder(order.id)?.status)
+
+        val result = service.refund(
+            order.id, "refund-1", "CARD", listOf(RefundLineItemInput(itemId, quantity = 1)), null, "manager-1"
+        )
+
+        val success = assertIs<RefundResult.Success>(result)
+        assertEquals(OrderStatus.PARTIALLY_REFUNDED, success.order.status)
+        assertEquals(11.0, success.order.amountRefunded)
+        assertEquals(11.0, success.order.remainingRefundable)
+        assertEquals(11.0, success.order.refunds.single().amount)
+
+        // Refunding the remaining unit completes the refund.
+        val second = assertIs<RefundResult.Success>(
+            service.refund(order.id, "refund-2", "CARD", listOf(RefundLineItemInput(itemId, quantity = 1)), null, "manager-1")
+        )
+        assertEquals(OrderStatus.REFUNDED, second.order.status)
+        assertEquals(22.0, second.order.amountRefunded)
+        assertEquals(0.0, second.order.remainingRefundable)
+    }
+
+    @Test
+    fun `refunding more units than remain on a line is rejected`() {
+        val service = OrderService()
+        val order = service.createOrder(seedCart(quantity = 2), seedTaxedTotals(), "key-1")
+        service.confirmPayment(order.id, "CARD", 22.0, null, "cashier-1")
+        val itemId = order.items.single().id
+        service.refund(order.id, "refund-1", "CARD", listOf(RefundLineItemInput(itemId, quantity = 1)), null, "manager-1")
+
+        val result = service.refund(order.id, "refund-2", "CARD", listOf(RefundLineItemInput(itemId, quantity = 2)), null, "manager-1")
+
+        assertIs<RefundResult.InvalidLineItem>(result)
+    }
+
+    @Test
+    fun `refunding an unknown line item is rejected`() {
+        val service = OrderService()
+        val order = service.createOrder(seedCart(), seedTotals(), "key-1")
+        service.confirmPayment(order.id, "CARD", 10.0, null, "cashier-1")
+
+        val result = service.refund(order.id, "refund-1", "MANUAL", listOf(RefundLineItemInput("no-such-item", quantity = 1)), null, "manager-1")
+
+        assertIs<RefundResult.InvalidLineItem>(result)
+    }
+
+    @Test
     fun `refunding a pending (unpaid) order is rejected`() {
         val service = OrderService()
         val order = service.createOrder(seedCart(), seedTotals(), "key-1")
+        val itemId = order.items.single().id
 
-        val result = service.refund(order.id, "refund-1", null, "manager-1")
+        val result = service.refund(order.id, "refund-1", "MANUAL", listOf(RefundLineItemInput(itemId, quantity = 1)), null, "manager-1")
 
-        assertEquals(RefundResult.NotPaid, result)
+        assertEquals(RefundResult.NotRefundable, result)
+    }
+
+    @Test
+    fun `refunding after the refund window has expired is rejected`() {
+        val now = Instant.parse("2026-04-01T00:00:00Z")
+        val service = OrderService(nowProvider = { now })
+        val order = service.createOrder(seedCart(), seedTotals(), "key-1", checkedOutAt = now.minus(91, ChronoUnit.DAYS))
+        service.confirmPayment(order.id, "CARD", 10.0, null, "cashier-1")
+        val itemId = order.items.single().id
+
+        val result = service.refund(order.id, "refund-1", "MANUAL", listOf(RefundLineItemInput(itemId, quantity = 1)), null, "manager-1")
+
+        assertEquals(RefundResult.RefundWindowExpired, result)
+    }
+
+    @Test
+    fun `refunding within the refund window succeeds`() {
+        val now = Instant.parse("2026-04-01T00:00:00Z")
+        val service = OrderService(nowProvider = { now })
+        val order = service.createOrder(seedCart(), seedTotals(), "key-1", checkedOutAt = now.minus(89, ChronoUnit.DAYS))
+        service.confirmPayment(order.id, "CARD", 10.0, null, "cashier-1")
+        val itemId = order.items.single().id
+
+        val result = service.refund(order.id, "refund-1", "MANUAL", listOf(RefundLineItemInput(itemId, quantity = 1)), null, "manager-1")
+
+        assertIs<RefundResult.Success>(result)
     }
 
     @Test
@@ -200,9 +301,11 @@ class OrderServiceTest {
         val service = OrderService()
         val order = service.createOrder(seedCart(), seedTotals(), "key-1")
         service.confirmPayment(order.id, "CARD", 10.0, null, "cashier-1")
+        val itemId = order.items.single().id
+        val lineItems = listOf(RefundLineItemInput(itemId, quantity = 1))
 
-        val first = assertIs<RefundResult.Success>(service.refund(order.id, "refund-1", null, "manager-1"))
-        val second = assertIs<RefundResult.Success>(service.refund(order.id, "refund-1", null, "manager-1"))
+        val first = assertIs<RefundResult.Success>(service.refund(order.id, "refund-1", "MANUAL", lineItems, null, "manager-1"))
+        val second = assertIs<RefundResult.Success>(service.refund(order.id, "refund-1", "MANUAL", lineItems, null, "manager-1"))
 
         assertEquals(false, first.replayed)
         assertEquals(true, second.replayed)
@@ -215,21 +318,23 @@ class OrderServiceTest {
     }
 
     @Test
-    fun `refunding an already-refunded order with a different refundId is rejected`() {
+    fun `refunding an already fully-refunded order with a different refundId is rejected as not refundable`() {
         val service = OrderService()
         val order = service.createOrder(seedCart(), seedTotals(), "key-1")
         service.confirmPayment(order.id, "CARD", 10.0, null, "cashier-1")
-        service.refund(order.id, "refund-1", null, "manager-1")
+        val itemId = order.items.single().id
+        service.refund(order.id, "refund-1", "MANUAL", listOf(RefundLineItemInput(itemId, quantity = 1)), null, "manager-1")
 
-        val result = service.refund(order.id, "refund-2", null, "manager-1")
+        val result = service.refund(order.id, "refund-2", "MANUAL", listOf(RefundLineItemInput(itemId, quantity = 1)), null, "manager-1")
 
-        assertEquals(RefundResult.AlreadyRefunded, result)
+        assertEquals(RefundResult.NotRefundable, result)
     }
 
     @Test
     fun `refunding an unknown order is rejected`() {
         val service = OrderService()
-        assertEquals(RefundResult.OrderNotFound, service.refund("does-not-exist", "refund-1", null, null))
+        val result = service.refund("does-not-exist", "refund-1", "MANUAL", listOf(RefundLineItemInput("item-1", quantity = 1)), null, null)
+        assertEquals(RefundResult.OrderNotFound, result)
     }
 
     @Test

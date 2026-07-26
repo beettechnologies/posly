@@ -1,7 +1,10 @@
 package com.beettechnologies.posly.payments
 
+import com.beettechnologies.posly.cart.Order
 import com.beettechnologies.posly.cart.OrderService
-import com.beettechnologies.posly.cart.OrderStatus
+import com.beettechnologies.posly.cart.RefundLineItemInput
+import com.beettechnologies.posly.cart.RefundPreviewResult
+import com.beettechnologies.posly.cart.RefundResult
 import com.beettechnologies.posly.gateway.GatewayException
 import com.beettechnologies.posly.gateway.RetryPolicy
 import kotlinx.coroutines.CoroutineScope
@@ -31,6 +34,18 @@ sealed class RefundPaymentResult {
     data object PaymentNotFound : RefundPaymentResult()
     data object NotApproved : RefundPaymentResult()
     data class GatewayError(val message: String) : RefundPaymentResult()
+}
+
+/** Outcome of the unified, order-centric CARD refund entry point - see [PaymentGatewayService.refundOrder]. */
+sealed class RefundOrderResult {
+    data class Success(val payment: GatewayPayment, val order: Order) : RefundOrderResult()
+    data object OrderNotFound : RefundOrderResult()
+    data object NoApprovedCardPayment : RefundOrderResult()
+    data object NotRefundable : RefundOrderResult()
+    data object RefundWindowExpired : RefundOrderResult()
+    data class InvalidLineItem(val message: String) : RefundOrderResult()
+    /** The order was never touched - a gateway failure here is exactly where a manual fallback is offered. */
+    data class GatewayError(val message: String) : RefundOrderResult()
 }
 
 /**
@@ -154,7 +169,9 @@ class PaymentGatewayService(
     /**
      * Idempotent by [refundId]: retrying the same refund replays the original result instead of
      * refunding twice. Every attempt - success or gateway failure - is recorded in [refundAttempts]
-     * so a failed one is never silently lost; see [listUnresolvedRefunds].
+     * so a failed one is never silently lost; see [listUnresolvedRefunds]. This is purely a
+     * payment/gateway-level operation - it does not touch the order; see [refundOrder] for the
+     * unified, order-centric entry point that also finalizes the order once the gateway confirms.
      */
     suspend fun refund(paymentId: String, refundId: String, amount: Double): RefundPaymentResult {
         val payment = payments[paymentId] ?: return RefundPaymentResult.PaymentNotFound
@@ -178,15 +195,66 @@ class PaymentGatewayService(
                 updated
             }
             recordRefundAttempt(refundId, paymentId, updated.orderId, amount, succeeded = true, error = null)
-
-            val order = orderService.getOrder(updated.orderId)
-            if (order?.status == OrderStatus.PAID) {
-                orderService.refund(updated.orderId, refundId, "Gateway refund $refundId", actorId = null)
-            }
             RefundPaymentResult.Success(updated)
         } catch (e: GatewayException) {
             recordRefundAttempt(refundId, paymentId, payment.orderId, amount, succeeded = false, error = e.message ?: "Gateway error")
             RefundPaymentResult.GatewayError(e.message ?: "Gateway error")
+        }
+    }
+
+    /**
+     * The unified, order-centric refund entry point for a CARD refund: finds the order's most
+     * recent approved card payment, previews [lineItems] against the order via
+     * [OrderService.previewRefund] (the single source of truth for refund eligibility/amount,
+     * shared with the MANUAL path), attempts the gateway refund for that amount, and only once the
+     * gateway confirms it finalizes the order via [OrderService.refund]. A gateway failure leaves
+     * the order completely untouched - nothing needs rolling back - so the caller can cleanly
+     * offer a manual fallback.
+     */
+    suspend fun refundOrder(
+        orderId: String,
+        refundId: String,
+        lineItems: List<RefundLineItemInput>,
+        reason: String?,
+        actorId: String?
+    ): RefundOrderResult {
+        val existingAttempt = refundAttempts[refundId]
+        if (existingAttempt?.status == RefundAttemptStatus.SUCCEEDED) {
+            val replayedPayment = payments[existingAttempt.paymentId]
+            val replayedOrder = orderService.getOrder(orderId)
+            if (replayedPayment != null && replayedOrder != null) {
+                return RefundOrderResult.Success(replayedPayment, replayedOrder)
+            }
+        }
+
+        val payment = payments.values
+            .filter { it.orderId == orderId && it.status == GatewayPaymentStatus.APPROVED }
+            .maxByOrNull { it.createdAt }
+            ?: return RefundOrderResult.NoApprovedCardPayment
+
+        val amount = when (val preview = orderService.previewRefund(orderId, lineItems)) {
+            is RefundPreviewResult.Success -> preview.amount
+            RefundPreviewResult.OrderNotFound -> return RefundOrderResult.OrderNotFound
+            RefundPreviewResult.NotRefundable -> return RefundOrderResult.NotRefundable
+            RefundPreviewResult.RefundWindowExpired -> return RefundOrderResult.RefundWindowExpired
+            is RefundPreviewResult.InvalidLineItem -> return RefundOrderResult.InvalidLineItem(preview.message)
+        }
+
+        return when (val gatewayResult = refund(payment.id, refundId, amount)) {
+            is RefundPaymentResult.Success -> {
+                when (val orderResult = orderService.refund(orderId, refundId, "CARD", lineItems, reason, actorId)) {
+                    is RefundResult.Success -> RefundOrderResult.Success(gatewayResult.payment, orderResult.order)
+                    // Unreachable in practice - previewRefund just validated the same order+lineItems -
+                    // mapped defensively rather than assuming so.
+                    RefundResult.OrderNotFound -> RefundOrderResult.OrderNotFound
+                    RefundResult.NotRefundable -> RefundOrderResult.NotRefundable
+                    RefundResult.RefundWindowExpired -> RefundOrderResult.RefundWindowExpired
+                    is RefundResult.InvalidLineItem -> RefundOrderResult.InvalidLineItem(orderResult.message)
+                }
+            }
+            RefundPaymentResult.PaymentNotFound -> RefundOrderResult.NoApprovedCardPayment
+            RefundPaymentResult.NotApproved -> RefundOrderResult.NoApprovedCardPayment
+            is RefundPaymentResult.GatewayError -> RefundOrderResult.GatewayError(gatewayResult.message)
         }
     }
 

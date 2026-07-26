@@ -28,6 +28,7 @@ fun DashboardScreen(
     onManageTaxProfiles: () -> Unit,
     onPairDevice: () -> Unit,
     onManageDevices: () -> Unit,
+    onManageRefunds: () -> Unit,
     authRepository: AuthRepository = koinInject()
 ) {
     val scope = rememberCoroutineScope()
@@ -56,8 +57,11 @@ fun DashboardScreen(
         Button(onClick = onPairDevice, modifier = Modifier.padding(bottom = 12.dp)) {
             Text("Pair a Device")
         }
-        Button(onClick = onManageDevices, modifier = Modifier.padding(bottom = 24.dp)) {
+        Button(onClick = onManageDevices, modifier = Modifier.padding(bottom = 12.dp)) {
             Text("Manage Devices")
+        }
+        Button(onClick = onManageRefunds, modifier = Modifier.padding(bottom = 24.dp)) {
+            Text("Refunds & Returns")
         }
         Button(onClick = { scope.launch { authRepository.logout() } }) {
             Text("Log out")

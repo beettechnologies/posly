@@ -96,8 +96,18 @@ data class PaymentRecordResponse(
 )
 
 @Serializable
+data class RefundLineItemResponse(
+    val cartItemId: String,
+    val quantity: Int,
+    val amount: Double,
+    val restock: Boolean
+)
+
+@Serializable
 data class RefundRecordResponse(
     val refundId: String,
+    val method: String,
+    val lineItems: List<RefundLineItemResponse>,
     val amount: Double,
     val reason: String?,
     val refundedBy: String?,
@@ -121,7 +131,9 @@ data class OrderResponse(
     val payments: List<PaymentRecordResponse>,
     val amountPaid: Double,
     val remainingBalance: Double,
-    val refund: RefundRecordResponse? = null
+    val refunds: List<RefundRecordResponse>,
+    val amountRefunded: Double,
+    val remainingRefundable: Double
 )
 
 @Serializable
@@ -132,7 +144,15 @@ data class ConfirmPaymentRequest(
 )
 
 @Serializable
-data class RefundRequest(val refundId: String, val reason: String? = null)
+data class RefundLineItemRequest(val cartItemId: String, val quantity: Int, val restock: Boolean = false)
+
+@Serializable
+data class RefundRequest(
+    val refundId: String,
+    val method: String,
+    val lineItems: List<RefundLineItemRequest>,
+    val reason: String? = null
+)
 
 @Serializable
 data class OrderEventResponse(
@@ -189,8 +209,17 @@ fun PaymentRecord.toResponse() = PaymentRecordResponse(
     maskedCardNumber = maskedCardNumber
 )
 
+fun RefundLineItem.toResponse() = RefundLineItemResponse(
+    cartItemId = cartItemId,
+    quantity = quantity,
+    amount = amount,
+    restock = restock
+)
+
 fun RefundRecord.toResponse() = RefundRecordResponse(
     refundId = refundId,
+    method = method,
+    lineItems = lineItems.map { it.toResponse() },
     amount = amount,
     reason = reason,
     refundedBy = refundedBy,
@@ -210,7 +239,9 @@ fun Order.toResponse() = OrderResponse(
     payments = payments.map { it.toResponse() },
     amountPaid = amountPaid,
     remainingBalance = remainingBalance,
-    refund = refund?.toResponse()
+    refunds = refunds.map { it.toResponse() },
+    amountRefunded = amountRefunded,
+    remainingRefundable = remainingRefundable
 )
 
 fun OrderEvent.toResponse() = OrderEventResponse(

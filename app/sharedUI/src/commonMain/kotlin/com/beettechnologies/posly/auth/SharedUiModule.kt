@@ -10,6 +10,7 @@ import com.beettechnologies.posly.devices.PairingViewModel
 import com.beettechnologies.posly.pos.PaymentViewModel
 import com.beettechnologies.posly.pos.ProductDetailViewModel
 import com.beettechnologies.posly.pos.ReceiptViewModel
+import com.beettechnologies.posly.pos.RefundViewModel
 import com.beettechnologies.posly.pos.SaleViewModel
 import org.koin.core.module.Module
 import org.koin.core.module.dsl.viewModel
@@ -29,4 +30,5 @@ val sharedUiModule: Module = module {
     viewModel { ProductDetailViewModel(get(), get()) }
     viewModel { PaymentViewModel(get(), get()) }
     viewModel { ReceiptViewModel(get()) }
+    viewModel { RefundViewModel(get()) }
 }

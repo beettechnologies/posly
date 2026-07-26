@@ -14,6 +14,8 @@ import com.beettechnologies.posly.orders.GetOrderOutcome
 import com.beettechnologies.posly.orders.OrderApi
 import com.beettechnologies.posly.orders.OrderResponse
 import com.beettechnologies.posly.orders.PaymentRecordResponse
+import com.beettechnologies.posly.orders.RefundLineItemRequest
+import com.beettechnologies.posly.orders.RefundOutcome
 import com.beettechnologies.posly.payments.CreatePaymentOutcome
 import com.beettechnologies.posly.payments.GetPaymentOutcome
 import com.beettechnologies.posly.payments.PaymentApi
@@ -68,6 +70,14 @@ private class FakeModalOrderApi(private var order: OrderResponse) : OrderApi {
         )
         return ConfirmPaymentOutcome.Success(order)
     }
+
+    override suspend fun refund(
+        orderId: String,
+        refundId: String,
+        method: String,
+        lineItems: List<RefundLineItemRequest>,
+        reason: String?
+    ): RefundOutcome = error("not used in this test")
 }
 
 /** Always stays INITIATED - these tests only assert the pre-resolution POLLING state, never a completed card tender. */
@@ -276,6 +286,13 @@ class PaymentModalTest {
                 override suspend fun getOrder(id: String): GetOrderOutcome = GetOrderOutcome.NotFound
                 override suspend fun confirmPayment(orderId: String, method: String, amount: Double, reference: String?) =
                     error("not used in this test")
+                override suspend fun refund(
+                    orderId: String,
+                    refundId: String,
+                    method: String,
+                    lineItems: List<RefundLineItemRequest>,
+                    reason: String?
+                ): RefundOutcome = error("not used in this test")
             },
             FakeModalPaymentApi()
         )

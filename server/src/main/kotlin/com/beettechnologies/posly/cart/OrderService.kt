@@ -1,6 +1,7 @@
 package com.beettechnologies.posly.cart
 
 import java.time.Instant
+import java.time.temporal.ChronoUnit
 import java.util.concurrent.ConcurrentHashMap
 
 sealed class ConfirmPaymentResult {
@@ -10,21 +11,44 @@ sealed class ConfirmPaymentResult {
     data class InvalidAmount(val message: String) : ConfirmPaymentResult()
 }
 
+/** One requested refund line - [restock] decides whether these units go back into inventory. */
+data class RefundLineItemInput(val cartItemId: String, val quantity: Int, val restock: Boolean = false)
+
+sealed class RefundPreviewResult {
+    data class Success(val amount: Double, val lineItems: List<RefundLineItem>) : RefundPreviewResult()
+    data object OrderNotFound : RefundPreviewResult()
+    data object NotRefundable : RefundPreviewResult()
+    data object RefundWindowExpired : RefundPreviewResult()
+    data class InvalidLineItem(val message: String) : RefundPreviewResult()
+}
+
 sealed class RefundResult {
     data class Success(val order: Order, val replayed: Boolean) : RefundResult()
     data object OrderNotFound : RefundResult()
-    data object NotPaid : RefundResult()
-    /** The order was already refunded under a DIFFERENT refundId - not a retry, a genuinely conflicting second refund. */
-    data object AlreadyRefunded : RefundResult()
+    /** Order was never paid, or is already refunded in full - nothing left to refund. */
+    data object NotRefundable : RefundResult()
+    data object RefundWindowExpired : RefundResult()
+    data class InvalidLineItem(val message: String) : RefundResult()
+}
+
+private sealed class RefundValidation {
+    data class Valid(val lineItems: List<RefundLineItem>, val amount: Double) : RefundValidation()
+    data object OrderNotFound : RefundValidation()
+    data object NotRefundable : RefundValidation()
+    data object RefundWindowExpired : RefundValidation()
+    data class InvalidLineItem(val message: String) : RefundValidation()
 }
 
 /**
- * Owns the Order aggregate and its PENDING -> PAID -> REFUNDED state machine, plus an
- * append-only audit trail of every transition. Orders are created by CartService.checkout
- * (always starting PENDING); everything after that - confirming payment, refunding - happens
- * here via atomic per-order transitions.
+ * Owns the Order aggregate and its PENDING -> PAID -> (PARTIALLY_REFUNDED ->) REFUNDED state
+ * machine, plus an append-only audit trail of every transition. Orders are created by
+ * CartService.checkout (always starting PENDING); everything after that - confirming payment,
+ * refunding - happens here via atomic per-order transitions.
  */
-class OrderService(private val nowProvider: () -> Instant = { Instant.now() }) {
+class OrderService(
+    private val nowProvider: () -> Instant = { Instant.now() },
+    private val refundWindowDays: Long = 90
+) {
 
     private val orders = ConcurrentHashMap<String, Order>()
     private val events = mutableListOf<OrderEvent>()
@@ -117,11 +141,38 @@ class OrderService(private val nowProvider: () -> Instant = { Instant.now() }) {
     }
 
     /**
-     * Idempotent by [refundId]: a retry with the SAME key against an already-refunded order
-     * replays the original result instead of erroring. A different key against an already-refunded
-     * order is rejected - that's not a retry, it's a second, conflicting refund attempt.
+     * Validates [lineItems] against [orderId] and computes what refunding them would cost -
+     * including each refunded line's fair share of order tax, allocated proportionally to its
+     * share of the taxable base, the same way a cart-level discount is already prorated in
+     * [computeTotals] - without mutating anything. Used both to show a cashier a total before they
+     * submit, and internally by the payment gateway to know the amount before ever calling out to
+     * it.
      */
-    fun refund(orderId: String, refundId: String, reason: String?, actorId: String?): RefundResult {
+    fun previewRefund(orderId: String, lineItems: List<RefundLineItemInput>): RefundPreviewResult =
+        when (val validation = validateRefund(orders[orderId], lineItems)) {
+            is RefundValidation.Valid -> RefundPreviewResult.Success(validation.amount, validation.lineItems)
+            RefundValidation.OrderNotFound -> RefundPreviewResult.OrderNotFound
+            RefundValidation.NotRefundable -> RefundPreviewResult.NotRefundable
+            RefundValidation.RefundWindowExpired -> RefundPreviewResult.RefundWindowExpired
+            is RefundValidation.InvalidLineItem -> RefundPreviewResult.InvalidLineItem(validation.message)
+        }
+
+    /**
+     * Idempotent by [refundId]: a retry with the SAME key replays the original result instead of
+     * re-validating or double-refunding. [method] is "CARD" or "MANUAL" purely for the record - by
+     * the time this is called for a card refund, the gateway call has already succeeded; a manual
+     * refund is a cashier/manager asserting they handled it outside the system. Restocking (if any
+     * [RefundLineItemInput.restock] is set) is the caller's responsibility once this succeeds -
+     * kept out of here to keep this service free of an inventory dependency.
+     */
+    fun refund(
+        orderId: String,
+        refundId: String,
+        method: String,
+        lineItems: List<RefundLineItemInput>,
+        reason: String?,
+        actorId: String?
+    ): RefundResult {
         var outcome: RefundResult = RefundResult.OrderNotFound
         orders.compute(orderId) { _, existing ->
             when {
@@ -129,40 +180,106 @@ class OrderService(private val nowProvider: () -> Instant = { Instant.now() }) {
                     outcome = RefundResult.OrderNotFound
                     null
                 }
-                existing.status == OrderStatus.REFUNDED -> {
-                    outcome = if (existing.refund?.refundId == refundId) {
-                        RefundResult.Success(existing, replayed = true)
-                    } else {
-                        RefundResult.AlreadyRefunded
+                existing.refunds.any { it.refundId == refundId } -> {
+                    outcome = RefundResult.Success(existing, replayed = true)
+                    existing
+                }
+                else -> when (val validation = validateRefund(existing, lineItems)) {
+                    is RefundValidation.Valid -> {
+                        val refund = RefundRecord(
+                            refundId = refundId,
+                            method = method,
+                            lineItems = validation.lineItems,
+                            amount = validation.amount,
+                            reason = reason,
+                            refundedBy = actorId,
+                            refundedAt = nowProvider()
+                        )
+                        val withRefund = existing.copy(refunds = existing.refunds + refund)
+                        val updated = if (withRefund.remainingRefundable <= 0.0) {
+                            withRefund.copy(status = OrderStatus.REFUNDED)
+                        } else {
+                            withRefund.copy(status = OrderStatus.PARTIALLY_REFUNDED)
+                        }
+                        outcome = RefundResult.Success(updated, replayed = false)
+                        updated
                     }
-                    existing
-                }
-                existing.status != OrderStatus.PAID -> {
-                    outcome = RefundResult.NotPaid
-                    existing
-                }
-                else -> {
-                    val refund = RefundRecord(
-                        refundId = refundId,
-                        amount = existing.totals.total,
-                        reason = reason,
-                        refundedBy = actorId,
-                        refundedAt = nowProvider()
-                    )
-                    val updated = existing.copy(status = OrderStatus.REFUNDED, refund = refund)
-                    outcome = RefundResult.Success(updated, replayed = false)
-                    updated
+                    RefundValidation.OrderNotFound -> {
+                        outcome = RefundResult.OrderNotFound
+                        existing
+                    }
+                    RefundValidation.NotRefundable -> {
+                        outcome = RefundResult.NotRefundable
+                        existing
+                    }
+                    RefundValidation.RefundWindowExpired -> {
+                        outcome = RefundResult.RefundWindowExpired
+                        existing
+                    }
+                    is RefundValidation.InvalidLineItem -> {
+                        outcome = RefundResult.InvalidLineItem(validation.message)
+                        existing
+                    }
                 }
             }
         }
         val success = outcome as? RefundResult.Success
         if (success != null && !success.replayed) {
-            recordEvent(orderId, OrderEventType.REFUNDED, actorId, "amount=${success.order.refund?.amount}")
+            val justRefunded = success.order.refunds.last()
+            recordEvent(orderId, OrderEventType.REFUNDED, actorId, "method=$method amount=${justRefunded.amount}")
         }
         return outcome
     }
 
     fun listEvents(orderId: String): List<OrderEvent> = synchronized(events) { events.filter { it.orderId == orderId } }
+
+    private fun validateRefund(order: Order?, lineItems: List<RefundLineItemInput>): RefundValidation {
+        if (order == null) return RefundValidation.OrderNotFound
+        if (order.status != OrderStatus.PAID && order.status != OrderStatus.PARTIALLY_REFUNDED) {
+            return RefundValidation.NotRefundable
+        }
+        if (order.remainingRefundable <= 0.0) return RefundValidation.NotRefundable
+
+        val windowEnd = order.checkedOutAt.plus(refundWindowDays, ChronoUnit.DAYS)
+        if (nowProvider().isAfter(windowEnd)) return RefundValidation.RefundWindowExpired
+
+        if (lineItems.isEmpty()) return RefundValidation.InvalidLineItem("at least one line item is required")
+
+        val resolvedLines = mutableListOf<RefundLineItem>()
+        var total = 0.0
+        for (input in lineItems) {
+            if (input.quantity <= 0) {
+                return RefundValidation.InvalidLineItem("quantity must be positive for ${input.cartItemId}")
+            }
+            val item = order.items.find { it.id == input.cartItemId }
+                ?: return RefundValidation.InvalidLineItem("unknown cart item ${input.cartItemId}")
+            val remainingQty = item.quantity - order.refundedQuantityFor(item.id)
+            if (input.quantity > remainingQty) {
+                return RefundValidation.InvalidLineItem(
+                    "cannot refund ${input.quantity} of '${item.productName}'; only $remainingQty remaining"
+                )
+            }
+
+            val perUnit = if (item.quantity > 0) item.lineTotal / item.quantity else 0.0
+            val preTaxAmount = roundCents(perUnit * input.quantity)
+            val isTaxable = item.taxCategory in TAXABLE_CATEGORIES
+            val taxShare = if (isTaxable && order.totals.taxableAmount > 0) {
+                roundCents(preTaxAmount / order.totals.taxableAmount * order.totals.totalTax)
+            } else {
+                0.0
+            }
+            val lineAmount = roundCents(preTaxAmount + taxShare)
+            total = roundCents(total + lineAmount)
+            resolvedLines += RefundLineItem(cartItemId = item.id, quantity = input.quantity, amount = lineAmount, restock = input.restock)
+        }
+
+        if (total > order.remainingRefundable) {
+            return RefundValidation.InvalidLineItem(
+                "requested refund of $total exceeds the remaining refundable balance of ${order.remainingRefundable}"
+            )
+        }
+        return RefundValidation.Valid(resolvedLines, total)
+    }
 
     private fun recordEvent(orderId: String, type: OrderEventType, actorId: String?, detail: String?) {
         synchronized(events) {

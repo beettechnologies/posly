@@ -24,6 +24,7 @@ import com.beettechnologies.posly.devices.DeviceCredentialsStore
 import com.beettechnologies.posly.devices.DeviceListScreen
 import com.beettechnologies.posly.devices.DevicePairingAdminScreen
 import com.beettechnologies.posly.devices.PairingScreen
+import com.beettechnologies.posly.pos.RefundScreen
 import com.beettechnologies.posly.pos.SaleScreen
 import org.koin.compose.koinInject
 
@@ -40,6 +41,7 @@ private const val ROUTE_TAX_PROFILE_FORM_EDIT = "taxProfileForm/{id}"
 private const val ROUTE_DEVICE_PAIRING_ADMIN = "devicePairingAdmin"
 private const val ROUTE_DEVICE_LIST = "deviceList"
 private const val ROUTE_SALE = "sale"
+private const val ROUTE_REFUNDS = "refunds"
 
 /**
  * Single navigation surface for the auth flow, driven reactively by
@@ -116,7 +118,8 @@ fun AuthNavHost(
                 onManageStores = { navController.navigate(ROUTE_STORES) },
                 onManageTaxProfiles = { navController.navigate(ROUTE_TAX_PROFILES) },
                 onPairDevice = { navController.navigate(ROUTE_DEVICE_PAIRING_ADMIN) },
-                onManageDevices = { navController.navigate(ROUTE_DEVICE_LIST) }
+                onManageDevices = { navController.navigate(ROUTE_DEVICE_LIST) },
+                onManageRefunds = { navController.navigate(ROUTE_REFUNDS) }
             )
         }
         composable(ROUTE_SALE) {
@@ -127,6 +130,9 @@ fun AuthNavHost(
         }
         composable(ROUTE_DEVICE_LIST) {
             DeviceListScreen(onBack = { navController.popBackStack() })
+        }
+        composable(ROUTE_REFUNDS) {
+            RefundScreen(onBack = { navController.popBackStack() })
         }
 
         composable(ROUTE_STORES) {

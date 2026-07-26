@@ -6,6 +6,8 @@ import com.beettechnologies.posly.orders.GetOrderOutcome
 import com.beettechnologies.posly.orders.OrderApi
 import com.beettechnologies.posly.orders.OrderResponse
 import com.beettechnologies.posly.orders.PaymentRecordResponse
+import com.beettechnologies.posly.orders.RefundLineItemRequest
+import com.beettechnologies.posly.orders.RefundOutcome
 import com.beettechnologies.posly.payments.CreatePaymentOutcome
 import com.beettechnologies.posly.payments.GetPaymentOutcome
 import com.beettechnologies.posly.payments.PaymentApi
@@ -79,6 +81,14 @@ private class FakeOrderApi(
         )
         return ConfirmPaymentOutcome.Success(order)
     }
+
+    override suspend fun refund(
+        orderId: String,
+        refundId: String,
+        method: String,
+        lineItems: List<RefundLineItemRequest>,
+        reason: String?
+    ): RefundOutcome = throw NotImplementedError("refund is not exercised by PaymentViewModelTest")
 }
 
 /**

@@ -131,7 +131,7 @@ fun Application.module() {
     configureTaxRoutes(taxProfileService)
     configureInventoryRoutes(inventoryService)
     configureCartRoutes(cartService)
-    configureOrderRoutes(orderService)
+    configureOrderRoutes(orderService, paymentGatewayService, inventoryService)
     configurePaymentRoutes(paymentGatewayService)
     configureSyncRoutes(offlineSyncService)
     configurePrintRoutes(printerRegistryService, printService)
