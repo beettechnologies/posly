@@ -3,6 +3,7 @@ package com.beettechnologies.posly.pos
 import com.beettechnologies.posly.cart.CartTotalsResponse
 import com.beettechnologies.posly.orders.ConfirmPaymentOutcome
 import com.beettechnologies.posly.orders.GetOrderOutcome
+import com.beettechnologies.posly.orders.ListOrdersOutcome
 import com.beettechnologies.posly.orders.OrderApi
 import com.beettechnologies.posly.orders.OrderResponse
 import com.beettechnologies.posly.orders.PaymentRecordResponse
@@ -89,6 +90,9 @@ private class FakeOrderApi(
         lineItems: List<RefundLineItemRequest>,
         reason: String?
     ): RefundOutcome = throw NotImplementedError("refund is not exercised by PaymentViewModelTest")
+
+    override suspend fun listOrders(storeId: String, from: String, to: String): ListOrdersOutcome =
+        throw NotImplementedError("listOrders is not exercised by PaymentViewModelTest")
 }
 
 /**

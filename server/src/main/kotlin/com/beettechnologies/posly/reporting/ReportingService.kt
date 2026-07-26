@@ -158,6 +158,36 @@ class ReportingService(
         return aggregate
     }
 
+    /**
+     * The best-selling products (by quantity sold) for the period containing [asOf] (defaults to
+     * "today so far", matching [getRealtimeSales]'s window) - computed fresh each call from order
+     * line items, since [SalesAggregate] only tracks store-wide totals, not a per-product breakdown.
+     */
+    fun getTopProducts(storeId: String, limit: Int = 5, period: ReportPeriod = ReportPeriod.DAILY, asOf: Instant = nowProvider()): List<ProductSalesSummary> {
+        val start = periodBounds(period, asOf).first
+        val completed = orderService.listOrders(storeId, start, asOf)
+            .filter { it.status == OrderStatus.PAID || it.status == OrderStatus.PARTIALLY_REFUNDED || it.status == OrderStatus.REFUNDED }
+        return completed.flatMap { it.items }
+            .groupBy { it.productId }
+            .map { (productId, items) ->
+                ProductSalesSummary(
+                    productId = productId,
+                    productName = items.first().productName,
+                    quantitySold = items.sumOf { it.quantity },
+                    revenue = items.sumOf { it.lineTotal }
+                )
+            }
+            .sortedByDescending { it.quantitySold }
+            .take(limit)
+    }
+
+    /** What's currently expected to be in the till(s) right now - the sum of [ShiftService.previewExpectedCash] across every OPEN shift at [storeId]. */
+    fun getCashOnHand(storeId: String): CashOnHandSummary {
+        val openShifts = shiftService.listShifts(storeId).filter { it.status == ShiftStatus.OPEN }
+        val total = openShifts.sumOf { shiftService.previewExpectedCash(it.id) ?: 0.0 }
+        return CashOnHandSummary(storeId = storeId, openShiftCount = openShifts.size, totalExpectedCash = total, asOf = nowProvider())
+    }
+
     private fun computeSales(storeId: String, period: ReportPeriod, from: Instant, to: Instant): SalesAggregate {
         val completed = orderService.listOrders(storeId, from, to)
             .filter { it.status == OrderStatus.PAID || it.status == OrderStatus.PARTIALLY_REFUNDED || it.status == OrderStatus.REFUNDED }

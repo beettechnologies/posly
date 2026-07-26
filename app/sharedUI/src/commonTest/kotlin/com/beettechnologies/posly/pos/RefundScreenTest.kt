@@ -12,6 +12,7 @@ import com.beettechnologies.posly.cart.CartItemResponse
 import com.beettechnologies.posly.cart.CartTotalsResponse
 import com.beettechnologies.posly.orders.ConfirmPaymentOutcome
 import com.beettechnologies.posly.orders.GetOrderOutcome
+import com.beettechnologies.posly.orders.ListOrdersOutcome
 import com.beettechnologies.posly.orders.OrderApi
 import com.beettechnologies.posly.orders.OrderResponse
 import com.beettechnologies.posly.orders.RefundLineItemRequest
@@ -93,6 +94,8 @@ private class FakeScreenOrderApi(
         )
         return RefundOutcome.Success(order)
     }
+
+    override suspend fun listOrders(storeId: String, from: String, to: String): ListOrdersOutcome = error("not used in this test")
 }
 
 @OptIn(ExperimentalTestApi::class, ExperimentalCoroutinesApi::class)

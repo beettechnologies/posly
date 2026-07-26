@@ -596,4 +596,62 @@ class OrderRoutesTest {
         }
         assertEquals(HttpStatusCode.NotFound, resp.status)
     }
+
+    // -------------------------------------------------------------------------
+    // GET /orders - drill-down transaction list
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `listing orders for a store returns only orders checked out within the given window`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val adminTok = accessToken(client, "admin", "admin123")
+        val cashierTok = accessToken(client, "cashier", "cashier123")
+        val orderId = seedPendingOrder(client, adminTok, cashierTok)
+        client.post("/orders/$orderId/payments") {
+            header(HttpHeaders.Authorization, "Bearer $cashierTok")
+            contentType(ContentType.Application.Json)
+            setBody("""{"method":"CARD","amount":10.0}""")
+        }
+        val storeId = Json.parseToJsonElement(
+            client.get("/orders/$orderId") { header(HttpHeaders.Authorization, "Bearer $adminTok") }.bodyAsText()
+        ).jsonObject["storeId"]!!.jsonPrimitive.content
+
+        val resp = client.get("/orders?storeId=$storeId&from=2000-01-01T00:00:00Z&to=2100-01-01T00:00:00Z") {
+            header(HttpHeaders.Authorization, "Bearer $adminTok")
+        }
+        assertEquals(HttpStatusCode.OK, resp.status)
+        val orders = Json.parseToJsonElement(resp.bodyAsText()).jsonArray
+        assertEquals(1, orders.size)
+        assertEquals(orderId, orders.single().jsonObject["id"]!!.jsonPrimitive.content)
+
+        val outsideWindowResp = client.get("/orders?storeId=$storeId&from=2000-01-01T00:00:00Z&to=2000-01-02T00:00:00Z") {
+            header(HttpHeaders.Authorization, "Bearer $adminTok")
+        }
+        assertEquals(0, Json.parseToJsonElement(outsideWindowResp.bodyAsText()).jsonArray.size)
+    }
+
+    @Test
+    fun `listing orders without a storeId returns 400`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val adminTok = accessToken(client, "admin", "admin123")
+
+        val resp = client.get("/orders?from=2000-01-01T00:00:00Z&to=2100-01-01T00:00:00Z") {
+            header(HttpHeaders.Authorization, "Bearer $adminTok")
+        }
+        assertEquals(HttpStatusCode.BadRequest, resp.status)
+    }
+
+    @Test
+    fun `a cashier cannot list orders for a store`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val cashierTok = accessToken(client, "cashier", "cashier123")
+
+        val resp = client.get("/orders?storeId=store-1&from=2000-01-01T00:00:00Z&to=2100-01-01T00:00:00Z") {
+            header(HttpHeaders.Authorization, "Bearer $cashierTok")
+        }
+        assertEquals(HttpStatusCode.Forbidden, resp.status)
+    }
 }

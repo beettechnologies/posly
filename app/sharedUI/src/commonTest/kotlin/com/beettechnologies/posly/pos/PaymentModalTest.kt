@@ -11,6 +11,7 @@ import androidx.compose.ui.test.runComposeUiTest
 import com.beettechnologies.posly.cart.CartTotalsResponse
 import com.beettechnologies.posly.orders.ConfirmPaymentOutcome
 import com.beettechnologies.posly.orders.GetOrderOutcome
+import com.beettechnologies.posly.orders.ListOrdersOutcome
 import com.beettechnologies.posly.orders.OrderApi
 import com.beettechnologies.posly.orders.OrderResponse
 import com.beettechnologies.posly.orders.PaymentRecordResponse
@@ -78,6 +79,8 @@ private class FakeModalOrderApi(private var order: OrderResponse) : OrderApi {
         lineItems: List<RefundLineItemRequest>,
         reason: String?
     ): RefundOutcome = error("not used in this test")
+
+    override suspend fun listOrders(storeId: String, from: String, to: String): ListOrdersOutcome = error("not used in this test")
 }
 
 /** Always stays INITIATED - these tests only assert the pre-resolution POLLING state, never a completed card tender. */
@@ -293,6 +296,8 @@ class PaymentModalTest {
                     lineItems: List<RefundLineItemRequest>,
                     reason: String?
                 ): RefundOutcome = error("not used in this test")
+                override suspend fun listOrders(storeId: String, from: String, to: String): ListOrdersOutcome =
+                    error("not used in this test")
             },
             FakeModalPaymentApi()
         )

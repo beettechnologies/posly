@@ -34,6 +34,13 @@ sealed class RefundOutcome {
     data class NetworkError(val message: String) : RefundOutcome()
 }
 
+sealed class ListOrdersOutcome {
+    data class Success(val orders: List<OrderResponse>) : ListOrdersOutcome()
+    data object Forbidden : ListOrdersOutcome()
+    data class Rejected(val message: String) : ListOrdersOutcome()
+    data class NetworkError(val message: String) : ListOrdersOutcome()
+}
+
 interface OrderApi {
     suspend fun getOrder(id: String): GetOrderOutcome
     suspend fun confirmPayment(orderId: String, method: String, amount: Double, reference: String? = null): ConfirmPaymentOutcome
@@ -44,6 +51,8 @@ interface OrderApi {
         lineItems: List<RefundLineItemRequest>,
         reason: String? = null
     ): RefundOutcome
+    /** [from]/[to] are ISO-8601 instant strings (e.g. "2026-01-15T00:00:00Z") - the drill-down transaction list for a dashboard metric. */
+    suspend fun listOrders(storeId: String, from: String, to: String): ListOrdersOutcome
 }
 
 class KtorOrderApi(
@@ -117,5 +126,28 @@ class KtorOrderApi(
         throw e
     } catch (e: Exception) {
         RefundOutcome.NetworkError(e.message ?: "Network error")
+    }
+
+    override suspend fun listOrders(storeId: String, from: String, to: String): ListOrdersOutcome = try {
+        val response = httpClient.get("$baseUrl/orders") {
+            url {
+                parameters.append("storeId", storeId)
+                parameters.append("from", from)
+                parameters.append("to", to)
+            }
+        }
+        when (response.status) {
+            HttpStatusCode.OK -> ListOrdersOutcome.Success(response.body())
+            HttpStatusCode.Forbidden -> ListOrdersOutcome.Forbidden
+            HttpStatusCode.BadRequest -> {
+                val error = runCatching { response.body<ErrorResponse>() }.getOrNull()
+                ListOrdersOutcome.Rejected(error?.error ?: "Unable to list transactions")
+            }
+            else -> ListOrdersOutcome.NetworkError("Server error (${response.status.value})")
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        ListOrdersOutcome.NetworkError(e.message ?: "Network error")
     }
 }

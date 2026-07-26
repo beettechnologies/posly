@@ -28,9 +28,11 @@ import com.beettechnologies.posly.devices.DeviceCredentialsStore
 import com.beettechnologies.posly.devices.DeviceListScreen
 import com.beettechnologies.posly.devices.DevicePairingAdminScreen
 import com.beettechnologies.posly.devices.PairingScreen
+import com.beettechnologies.posly.pos.ManagerDashboardScreen
 import com.beettechnologies.posly.pos.RefundScreen
 import com.beettechnologies.posly.pos.SaleScreen
 import com.beettechnologies.posly.pos.ShiftScreen
+import com.beettechnologies.posly.pos.TransactionListScreen
 import org.koin.compose.koinInject
 
 private const val ROUTE_PAIRING = "pairing"
@@ -54,6 +56,16 @@ private const val ROUTE_USER_FORM = "userForm"
 private const val ROUTE_USER_FORM_EDIT = "userForm/{id}"
 private const val ROUTE_SSO_CONFIG = "ssoConfig"
 private const val ROUTE_IMPORT_PRODUCTS = "importProducts"
+private const val ROUTE_MANAGER_DASHBOARD = "managerDashboard"
+private const val ROUTE_TRANSACTION_LIST = "transactionList"
+
+private data class TransactionListArgs(
+    val storeId: String,
+    val from: String,
+    val to: String,
+    val productId: String?,
+    val productName: String?
+)
 
 /**
  * Single navigation surface for the auth flow, driven reactively by
@@ -80,6 +92,7 @@ fun AuthNavHost(
     val authState by authRepository.authState.collectAsStateWithLifecycle()
     var pairingChecked by remember { mutableStateOf(false) }
     var isPaired by remember { mutableStateOf(false) }
+    var pendingTransactionListArgs by remember { mutableStateOf<TransactionListArgs?>(null) }
 
     LaunchedEffect(Unit) {
         isPaired = credentialsStore.isPaired()
@@ -145,7 +158,8 @@ fun AuthNavHost(
                 onManageRefunds = { navController.navigate(ROUTE_REFUNDS) },
                 onManageShift = { navController.navigate(ROUTE_SHIFT) },
                 onManageUsers = { navController.navigate(ROUTE_USERS) },
-                onImportProducts = { navController.navigate(ROUTE_IMPORT_PRODUCTS) }
+                onImportProducts = { navController.navigate(ROUTE_IMPORT_PRODUCTS) },
+                onManageDashboard = { navController.navigate(ROUTE_MANAGER_DASHBOARD) }
             )
         }
         composable(ROUTE_SALE) {
@@ -235,6 +249,28 @@ fun AuthNavHost(
         }
         composable(ROUTE_IMPORT_PRODUCTS) {
             ImportWizardScreen(onBack = { navController.popBackStack() })
+        }
+        composable(ROUTE_MANAGER_DASHBOARD) {
+            ManagerDashboardScreen(
+                onBack = { navController.popBackStack() },
+                onDrillDown = { storeId, from, to, productId, productName ->
+                    pendingTransactionListArgs = TransactionListArgs(storeId, from, to, productId, productName)
+                    navController.navigate(ROUTE_TRANSACTION_LIST)
+                }
+            )
+        }
+        composable(ROUTE_TRANSACTION_LIST) {
+            val args = pendingTransactionListArgs
+            if (args != null) {
+                TransactionListScreen(
+                    storeId = args.storeId,
+                    from = args.from,
+                    to = args.to,
+                    productId = args.productId,
+                    productName = args.productName,
+                    onBack = { navController.popBackStack() }
+                )
+            }
         }
     }
 }

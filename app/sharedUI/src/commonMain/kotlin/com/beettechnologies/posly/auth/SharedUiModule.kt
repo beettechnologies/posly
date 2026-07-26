@@ -11,12 +11,14 @@ import com.beettechnologies.posly.admin.UserListViewModel
 import com.beettechnologies.posly.devices.DeviceListViewModel
 import com.beettechnologies.posly.devices.DevicePairingAdminViewModel
 import com.beettechnologies.posly.devices.PairingViewModel
+import com.beettechnologies.posly.pos.ManagerDashboardViewModel
 import com.beettechnologies.posly.pos.PaymentViewModel
 import com.beettechnologies.posly.pos.ProductDetailViewModel
 import com.beettechnologies.posly.pos.ReceiptViewModel
 import com.beettechnologies.posly.pos.RefundViewModel
 import com.beettechnologies.posly.pos.SaleViewModel
 import com.beettechnologies.posly.pos.ShiftViewModel
+import com.beettechnologies.posly.pos.TransactionListViewModel
 import org.koin.core.module.Module
 import org.koin.core.module.dsl.viewModel
 import org.koin.dsl.module
@@ -42,4 +44,6 @@ val sharedUiModule: Module = module {
     viewModel { SsoConfigViewModel(get()) }
     viewModel { AcceptInviteViewModel(get()) }
     viewModel { ImportWizardViewModel(get()) }
+    viewModel { ManagerDashboardViewModel(get(), get()) }
+    viewModel { TransactionListViewModel(get()) }
 }

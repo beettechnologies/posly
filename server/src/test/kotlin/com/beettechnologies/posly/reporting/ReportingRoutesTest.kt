@@ -218,4 +218,100 @@ class ReportingRoutesTest {
         }
         assertEquals(HttpStatusCode.NotFound, resp.status)
     }
+
+    // -------------------------------------------------------------------------
+    // Top products
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `top products for a store with no sales returns an empty list`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val token = client.loginAs("manager", "manager123")
+        val storeId = client.createStore()
+
+        val resp = client.get("/reports/top-products?storeId=$storeId") { header(HttpHeaders.Authorization, "Bearer $token") }
+        assertEquals(HttpStatusCode.OK, resp.status)
+        assertEquals(0, Json.parseToJsonElement(resp.bodyAsText()).jsonArray.size)
+    }
+
+    @Test
+    fun `top products respects a custom limit`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val token = client.loginAs("manager", "manager123")
+        val storeId = client.createStore()
+
+        val resp = client.get("/reports/top-products?storeId=$storeId&limit=3") { header(HttpHeaders.Authorization, "Bearer $token") }
+        assertEquals(HttpStatusCode.OK, resp.status)
+    }
+
+    @Test
+    fun `top products without a storeId returns 400`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val token = client.loginAs("manager", "manager123")
+
+        val resp = client.get("/reports/top-products") { header(HttpHeaders.Authorization, "Bearer $token") }
+        assertEquals(HttpStatusCode.BadRequest, resp.status)
+    }
+
+    @Test
+    fun `a cashier cannot view top products`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val token = client.loginAs("cashier", "cashier123")
+
+        val resp = client.get("/reports/top-products?storeId=store-1") { header(HttpHeaders.Authorization, "Bearer $token") }
+        assertEquals(HttpStatusCode.Forbidden, resp.status)
+    }
+
+    // -------------------------------------------------------------------------
+    // Cash on hand
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `cash on hand for a store with no open shifts is zero`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val token = client.loginAs("manager", "manager123")
+        val storeId = client.createStore()
+
+        val resp = client.get("/reports/cash-on-hand?storeId=$storeId") { header(HttpHeaders.Authorization, "Bearer $token") }
+        assertEquals(HttpStatusCode.OK, resp.status)
+        val body = Json.parseToJsonElement(resp.bodyAsText()).jsonObject
+        assertEquals(0, body["openShiftCount"]!!.jsonPrimitive.int)
+        assertEquals(0.0, body["totalExpectedCash"]!!.jsonPrimitive.double)
+    }
+
+    @Test
+    fun `cash on hand reflects an open shift's opening float`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val token = client.loginAs("manager", "manager123")
+        val storeId = client.createStore()
+
+        val openResp = client.post("/shifts/open") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+            contentType(ContentType.Application.Json)
+            setBody("""{"storeId":"$storeId","openingFloat":150.0}""")
+        }
+        assertEquals(HttpStatusCode.Created, openResp.status)
+
+        val resp = client.get("/reports/cash-on-hand?storeId=$storeId") { header(HttpHeaders.Authorization, "Bearer $token") }
+        assertEquals(HttpStatusCode.OK, resp.status)
+        val body = Json.parseToJsonElement(resp.bodyAsText()).jsonObject
+        assertEquals(1, body["openShiftCount"]!!.jsonPrimitive.int)
+        assertEquals(150.0, body["totalExpectedCash"]!!.jsonPrimitive.double)
+    }
+
+    @Test
+    fun `cash on hand without a storeId returns 400`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val token = client.loginAs("manager", "manager123")
+
+        val resp = client.get("/reports/cash-on-hand") { header(HttpHeaders.Authorization, "Bearer $token") }
+        assertEquals(HttpStatusCode.BadRequest, resp.status)
+    }
 }

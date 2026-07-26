@@ -4,6 +4,7 @@ import com.beettechnologies.posly.cart.CartItemResponse
 import com.beettechnologies.posly.cart.CartTotalsResponse
 import com.beettechnologies.posly.orders.ConfirmPaymentOutcome
 import com.beettechnologies.posly.orders.GetOrderOutcome
+import com.beettechnologies.posly.orders.ListOrdersOutcome
 import com.beettechnologies.posly.orders.OrderApi
 import com.beettechnologies.posly.orders.OrderResponse
 import com.beettechnologies.posly.orders.RefundLineItemRequest
@@ -114,6 +115,8 @@ private class FakeRefundOrderApi(
         )
         return RefundOutcome.Success(order)
     }
+
+    override suspend fun listOrders(storeId: String, from: String, to: String): ListOrdersOutcome = error("not used in this test")
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -176,6 +179,7 @@ class RefundViewModelTest {
                 error("not used in this test")
             override suspend fun refund(orderId: String, refundId: String, method: String, lineItems: List<RefundLineItemRequest>, reason: String?) =
                 error("not used in this test")
+            override suspend fun listOrders(storeId: String, from: String, to: String): ListOrdersOutcome = error("not used in this test")
         }
         val viewModel = RefundViewModel(orderApi)
 

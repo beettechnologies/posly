@@ -12,6 +12,7 @@ import com.beettechnologies.posly.orders.ordersModule
 import com.beettechnologies.posly.payments.paymentsModule
 import com.beettechnologies.posly.products.productsModule
 import com.beettechnologies.posly.receipts.receiptsModule
+import com.beettechnologies.posly.reporting.reportingModule
 import com.beettechnologies.posly.shifts.shiftsModule
 import com.beettechnologies.posly.stores.storesModule
 import com.beettechnologies.posly.users.usersModule
@@ -32,7 +33,8 @@ fun main() {
             receiptsModule,
             shiftsModule,
             usersModule,
-            importModule
+            importModule,
+            reportingModule
         )
     }
 

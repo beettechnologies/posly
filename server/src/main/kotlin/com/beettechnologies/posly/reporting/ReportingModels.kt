@@ -44,6 +44,21 @@ data class StaffAggregate(
     val generatedAt: Instant
 )
 
+/** One product's contribution to a period's sales - the "top sellers" a store manager checks at a glance. */
+data class ProductSalesSummary(
+    val productId: String,
+    val productName: String,
+    val quantitySold: Int,
+    val revenue: Double
+)
+
+data class CashOnHandSummary(
+    val storeId: String,
+    val openShiftCount: Int,
+    val totalExpectedCash: Double,
+    val asOf: Instant
+)
+
 enum class PipelineRunStatus { RUNNING, SUCCESS, FAILED }
 
 /** One execution of the batch pipeline - the durable record backfill/monitoring/alerting consult. */

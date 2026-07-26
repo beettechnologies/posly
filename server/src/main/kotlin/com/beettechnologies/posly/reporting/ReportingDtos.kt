@@ -85,3 +85,13 @@ fun StaffAggregate.toResponse() = StaffAggregateResponse(
     shiftsWorked = shiftsWorked, distinctCashiers = distinctCashiers, totalCashVariance = totalCashVariance,
     shiftsWithNote = shiftsWithNote, generatedAt = generatedAt.toString()
 )
+
+@Serializable
+data class ProductSalesSummaryResponse(val productId: String, val productName: String, val quantitySold: Int, val revenue: Double)
+
+fun ProductSalesSummary.toResponse() = ProductSalesSummaryResponse(productId, productName, quantitySold, revenue)
+
+@Serializable
+data class CashOnHandResponse(val storeId: String, val openShiftCount: Int, val totalExpectedCash: Double, val asOf: String)
+
+fun CashOnHandSummary.toResponse() = CashOnHandResponse(storeId, openShiftCount, totalExpectedCash, asOf.toString())

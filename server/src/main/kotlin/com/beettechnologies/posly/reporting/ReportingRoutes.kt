@@ -134,6 +134,44 @@ fun Application.configureReportingRoutes(reportingService: ReportingService) {
                         }
                     }
 
+                    get("/top-products") {
+                        val storeId = call.request.queryParameters["storeId"] ?: run {
+                            call.respond(HttpStatusCode.BadRequest, ErrorResponse("storeId query parameter is required"))
+                            return@get
+                        }
+                        val limit = call.request.queryParameters["limit"]?.toIntOrNull() ?: 5
+                        if (limit <= 0) {
+                            call.respond(HttpStatusCode.BadRequest, ErrorResponse("limit must be positive"))
+                            return@get
+                        }
+                        val period = call.request.queryParameters["period"]?.let {
+                            parsePeriod(it) ?: run {
+                                call.respond(HttpStatusCode.BadRequest, ErrorResponse("period must be one of: ${ReportPeriod.entries.joinToString()}"))
+                                return@get
+                            }
+                        } ?: ReportPeriod.DAILY
+                        val asOf = call.request.queryParameters["asOf"]?.let {
+                            parseInstant(it) ?: run {
+                                call.respond(HttpStatusCode.BadRequest, ErrorResponse("asOf must be an ISO-8601 instant"))
+                                return@get
+                            }
+                        }
+                        val topProducts = if (asOf != null) {
+                            reportingService.getTopProducts(storeId, limit, period, asOf)
+                        } else {
+                            reportingService.getTopProducts(storeId, limit, period)
+                        }
+                        call.respond(HttpStatusCode.OK, topProducts.map { it.toResponse() })
+                    }
+
+                    get("/cash-on-hand") {
+                        val storeId = call.request.queryParameters["storeId"] ?: run {
+                            call.respond(HttpStatusCode.BadRequest, ErrorResponse("storeId query parameter is required"))
+                            return@get
+                        }
+                        call.respond(HttpStatusCode.OK, reportingService.getCashOnHand(storeId).toResponse())
+                    }
+
                     get("/staff") {
                         val storeId = call.request.queryParameters["storeId"]
                         val period = call.request.queryParameters["period"]?.let {

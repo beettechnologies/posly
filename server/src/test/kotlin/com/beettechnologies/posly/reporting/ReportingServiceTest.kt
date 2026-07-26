@@ -81,6 +81,30 @@ class ReportingServiceTest {
         return order.id
     }
 
+    private fun seedPaidOrderWithProduct(
+        orders: OrderService,
+        storeId: String,
+        productId: String,
+        productName: String,
+        quantity: Int,
+        unitPrice: Double,
+        checkedOutAt: Instant
+    ): String {
+        val amount = unitPrice * quantity
+        val cart = Cart(
+            id = "cart-${(0..10_000_000).random()}",
+            storeId = storeId,
+            createdBy = "cashier-1",
+            items = listOf(CartItem(productId = productId, productName = productName, quantity = quantity, unitPrice = unitPrice, taxCategory = TaxCategory.STANDARD)),
+            createdAt = checkedOutAt,
+            updatedAt = checkedOutAt
+        )
+        val totals = CartTotals(amount, 0.0, 0.0, amount, emptyList(), 0.0, amount)
+        val order = orders.createOrder(cart, totals, "key-${(0..10_000_000).random()}", checkedOutAt = checkedOutAt)
+        orders.confirmPayment(order.id, "CASH", amount, null, "cashier-1")
+        return order.id
+    }
+
     // -------------------------------------------------------------------------
     // Sales aggregate
     // -------------------------------------------------------------------------
@@ -316,5 +340,85 @@ class ReportingServiceTest {
 
         assertEquals(listOf(run2.id, run1.id), runs.map { it.id })
         assertEquals(run1, h.reporting.getPipelineRun(run1.id))
+    }
+
+    // -------------------------------------------------------------------------
+    // Top products
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `getTopProducts ranks by quantity sold and respects the limit`() {
+        val h = newHarness(now = Instant.parse("2026-01-15T12:00:00Z"))
+        val storeId = seedStore(h.stores)
+        seedPaidOrderWithProduct(h.orders, storeId, "prod-A", "Widget A", quantity = 10, unitPrice = 1.0, checkedOutAt = h.clock.instant)
+        seedPaidOrderWithProduct(h.orders, storeId, "prod-B", "Widget B", quantity = 5, unitPrice = 100.0, checkedOutAt = h.clock.instant)
+        seedPaidOrderWithProduct(h.orders, storeId, "prod-C", "Widget C", quantity = 20, unitPrice = 0.5, checkedOutAt = h.clock.instant)
+        seedPaidOrderWithProduct(h.orders, storeId, "prod-C", "Widget C", quantity = 3, unitPrice = 0.5, checkedOutAt = h.clock.instant) // second order, same product - should merge
+        h.clock.instant = h.clock.instant.plusMillis(1) // getTopProducts' window is [start, now) - move past the orders' exact checkedOutAt
+
+        val top = h.reporting.getTopProducts(storeId, limit = 2)
+
+        assertEquals(2, top.size)
+        assertEquals("prod-C", top[0].productId)
+        assertEquals(23, top[0].quantitySold)
+        assertEquals(11.5, top[0].revenue)
+        assertEquals("prod-A", top[1].productId)
+        assertEquals(10, top[1].quantitySold)
+    }
+
+    @Test
+    fun `getTopProducts only considers orders within the period`() {
+        val h = newHarness(now = Instant.parse("2026-01-15T12:00:00Z"))
+        val storeId = seedStore(h.stores)
+        seedPaidOrderWithProduct(h.orders, storeId, "prod-today", "Today Widget", quantity = 5, unitPrice = 1.0, checkedOutAt = h.clock.instant)
+        seedPaidOrderWithProduct(h.orders, storeId, "prod-yesterday", "Yesterday Widget", quantity = 99, unitPrice = 1.0, checkedOutAt = Instant.parse("2026-01-14T12:00:00Z"))
+        h.clock.instant = h.clock.instant.plusMillis(1) // the window is [start, now) - move past the today-order's exact checkedOutAt
+
+        val top = h.reporting.getTopProducts(storeId)
+
+        assertEquals(1, top.size)
+        assertEquals("prod-today", top.single().productId)
+    }
+
+    @Test
+    fun `getTopProducts for a store with no sales returns an empty list`() {
+        val h = newHarness()
+        val storeId = seedStore(h.stores)
+
+        assertTrue(h.reporting.getTopProducts(storeId).isEmpty())
+    }
+
+    // -------------------------------------------------------------------------
+    // Cash on hand
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `getCashOnHand sums expected cash across every open shift, ignoring closed ones`() {
+        val h = newHarness(now = Instant.parse("2026-01-15T09:00:00Z"))
+        val storeId = seedStore(h.stores)
+
+        assertIs<OpenShiftResult.Success>(h.shifts.openShift(storeId, "cashier-1", 100.0))
+        assertIs<OpenShiftResult.Success>(h.shifts.openShift(storeId, "cashier-2", 75.0))
+
+        // A third, already-closed shift must not contribute to the "currently in the till" total.
+        val shift3 = assertIs<OpenShiftResult.Success>(h.shifts.openShift(storeId, "cashier-3", 200.0)).shift
+        assertIs<CloseShiftResult.Success>(h.shifts.closeShift(shift3.id, closingCount = 200.0, note = null, closedBy = "cashier-3", closedByIsManagerOrAdmin = true))
+
+        val cashOnHand = h.reporting.getCashOnHand(storeId)
+
+        // 100 + 75 opening floats for the two still-open shifts; no sales in either window yet.
+        assertEquals(2, cashOnHand.openShiftCount)
+        assertEquals(175.0, cashOnHand.totalExpectedCash)
+    }
+
+    @Test
+    fun `getCashOnHand for a store with no open shifts is zero`() {
+        val h = newHarness()
+        val storeId = seedStore(h.stores)
+
+        val cashOnHand = h.reporting.getCashOnHand(storeId)
+
+        assertEquals(0, cashOnHand.openShiftCount)
+        assertEquals(0.0, cashOnHand.totalExpectedCash)
     }
 }
