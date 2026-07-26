@@ -29,6 +29,25 @@ data class ShiftResponse(
 @Serializable
 data class ExpectedCashResponse(val expectedCash: Double, val asOf: String)
 
+@Serializable
+data class ShiftAuditEventResponse(
+    val id: String,
+    val shiftId: String,
+    val type: String,
+    val actorId: String?,
+    val detail: String?,
+    val createdAt: String
+)
+
+fun ShiftAuditEvent.toResponse() = ShiftAuditEventResponse(
+    id = id,
+    shiftId = shiftId,
+    type = type.name,
+    actorId = actorId,
+    detail = detail,
+    createdAt = createdAt.toString()
+)
+
 fun Shift.toResponse(): ShiftResponse {
     val cause = variance?.let { ShiftVarianceEngine.causeFor(it) }
     return ShiftResponse(

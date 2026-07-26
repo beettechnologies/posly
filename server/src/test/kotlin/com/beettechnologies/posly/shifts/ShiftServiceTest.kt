@@ -321,4 +321,111 @@ class ShiftServiceTest {
         assertEquals(1, h.shifts.listShifts(storeId = storeA, cashierId = "cashier-1").size)
         assertEquals(3, h.shifts.listShifts().size)
     }
+
+    @Test
+    fun `opening a shift records an OPENED audit event`() {
+        val h = newHarness()
+        val storeId = seedStore(h.stores)
+
+        val shift = (h.shifts.openShift(storeId, "cashier-1", 100.0) as OpenShiftResult.Success).shift
+
+        val events = h.shifts.listAuditEvents(shift.id)
+        assertEquals(listOf(ShiftAuditEventType.OPENED), events.map { it.type })
+        assertEquals("cashier-1", events.single().actorId)
+    }
+
+    @Test
+    fun `closing with an exact count records CLOSED but no discrepancy event`() {
+        val h = newHarness()
+        val storeId = seedStore(h.stores)
+        val shift = (h.shifts.openShift(storeId, "cashier-1", 100.0) as OpenShiftResult.Success).shift
+
+        h.shifts.closeShift(shift.id, closingCount = 100.0, note = null, closedBy = "cashier-1", closedByIsManagerOrAdmin = false)
+
+        val events = h.shifts.listAuditEvents(shift.id)
+        assertEquals(listOf(ShiftAuditEventType.OPENED, ShiftAuditEventType.CLOSED), events.map { it.type })
+    }
+
+    @Test
+    fun `closing with a within-threshold variance records a DISCREPANCY_RECORDED event`() {
+        val h = newHarness(threshold = 5.0)
+        val storeId = seedStore(h.stores)
+        val shift = (h.shifts.openShift(storeId, "cashier-1", 100.0) as OpenShiftResult.Success).shift
+
+        h.shifts.closeShift(shift.id, closingCount = 103.0, note = null, closedBy = "cashier-1", closedByIsManagerOrAdmin = false)
+
+        val events = h.shifts.listAuditEvents(shift.id)
+        assertEquals(listOf(ShiftAuditEventType.OPENED, ShiftAuditEventType.CLOSED, ShiftAuditEventType.DISCREPANCY_RECORDED), events.map { it.type })
+        val discrepancy = events.single { it.type == ShiftAuditEventType.DISCREPANCY_RECORDED }
+        assertTrue(discrepancy.detail!!.contains("variance=3.0"))
+        assertTrue(discrepancy.detail!!.contains("cause=OVER"))
+    }
+
+    @Test
+    fun `a manager override with a reason logs it as a MANAGER_OVERRIDE event linked to the shift`() {
+        val h = newHarness(threshold = 5.0)
+        val storeId = seedStore(h.stores)
+        val shift = (h.shifts.openShift(storeId, "cashier-1", 100.0) as OpenShiftResult.Success).shift
+
+        h.shifts.closeShift(
+            shift.id, closingCount = 80.0, note = "Cashier reported a till error, verified in person",
+            closedBy = "manager-1", closedByIsManagerOrAdmin = true
+        )
+
+        val events = h.shifts.listAuditEvents(shift.id)
+        val override = events.single { it.type == ShiftAuditEventType.MANAGER_OVERRIDE }
+        assertEquals(shift.id, override.shiftId)
+        assertEquals("manager-1", override.actorId)
+        assertTrue(override.detail!!.contains("Cashier reported a till error, verified in person"))
+    }
+
+    @Test
+    fun `a manager override with no reason is still logged, noting none was provided`() {
+        val h = newHarness(threshold = 5.0)
+        val storeId = seedStore(h.stores)
+        val shift = (h.shifts.openShift(storeId, "cashier-1", 100.0) as OpenShiftResult.Success).shift
+
+        h.shifts.closeShift(shift.id, closingCount = 80.0, note = null, closedBy = "manager-1", closedByIsManagerOrAdmin = true)
+
+        val override = h.shifts.listAuditEvents(shift.id).single { it.type == ShiftAuditEventType.MANAGER_OVERRIDE }
+        assertTrue(override.detail!!.contains("No reason provided"))
+    }
+
+    @Test
+    fun `a note-satisfied over-threshold close by a non-manager does not record a MANAGER_OVERRIDE event`() {
+        val h = newHarness(threshold = 5.0)
+        val storeId = seedStore(h.stores)
+        val shift = (h.shifts.openShift(storeId, "cashier-1", 100.0) as OpenShiftResult.Success).shift
+
+        h.shifts.closeShift(shift.id, closingCount = 80.0, note = "Till was short", closedBy = "cashier-1", closedByIsManagerOrAdmin = false)
+
+        val events = h.shifts.listAuditEvents(shift.id)
+        assertTrue(events.none { it.type == ShiftAuditEventType.MANAGER_OVERRIDE }, "a cashier satisfying the requirement with a note is not an override")
+        assertTrue(events.any { it.type == ShiftAuditEventType.DISCREPANCY_RECORDED })
+    }
+
+    @Test
+    fun `a rejected close (requires override or note) does not record any audit events`() {
+        val h = newHarness(threshold = 5.0)
+        val storeId = seedStore(h.stores)
+        val shift = (h.shifts.openShift(storeId, "cashier-1", 100.0) as OpenShiftResult.Success).shift
+
+        val result = h.shifts.closeShift(shift.id, closingCount = 80.0, note = null, closedBy = "cashier-1", closedByIsManagerOrAdmin = false)
+
+        assertIs<CloseShiftResult.RequiresOverrideOrNote>(result)
+        assertEquals(listOf(ShiftAuditEventType.OPENED), h.shifts.listAuditEvents(shift.id).map { it.type })
+    }
+
+    @Test
+    fun `listAuditEvents scopes to the given shift and returns events oldest first`() {
+        val h = newHarness()
+        val storeId = seedStore(h.stores)
+        val shiftA = (h.shifts.openShift(storeId, "cashier-1", 100.0) as OpenShiftResult.Success).shift
+        val shiftB = (h.shifts.openShift(storeId, "cashier-2", 50.0) as OpenShiftResult.Success).shift
+        h.shifts.closeShift(shiftA.id, 100.0, null, "cashier-1", false)
+
+        val eventsA = h.shifts.listAuditEvents(shiftA.id)
+        assertEquals(listOf(ShiftAuditEventType.OPENED, ShiftAuditEventType.CLOSED), eventsA.map { it.type })
+        assertEquals(listOf(ShiftAuditEventType.OPENED), h.shifts.listAuditEvents(shiftB.id).map { it.type })
+    }
 }

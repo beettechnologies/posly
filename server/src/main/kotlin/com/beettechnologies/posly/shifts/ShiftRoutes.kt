@@ -101,6 +101,18 @@ fun Application.configureShiftRoutes(shiftService: ShiftService) {
                         }
                     }
                 }
+
+                // Discrepancy/override audit trail: finance/reconciliation surface, not a cashier-facing view.
+                withRole(Role.ADMIN, Role.MANAGER) {
+                    get("/{id}/audit-events") {
+                        val id = call.parameters["id"]!!
+                        if (shiftService.getShift(id) == null) {
+                            call.respond(HttpStatusCode.NotFound, ErrorResponse("Shift not found"))
+                            return@get
+                        }
+                        call.respond(HttpStatusCode.OK, shiftService.listAuditEvents(id).map { it.toResponse() })
+                    }
+                }
             }
         }
     }

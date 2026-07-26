@@ -4,6 +4,7 @@ import com.beettechnologies.posly.cart.OrderService
 import com.beettechnologies.posly.cart.roundCents
 import com.beettechnologies.posly.stores.StoreService
 import java.time.Instant
+import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 
 sealed class OpenShiftResult {
@@ -37,6 +38,7 @@ class ShiftService(
     private val varianceThreshold: Double = ShiftVarianceEngine.DEFAULT_THRESHOLD
 ) {
     private val shifts = ConcurrentHashMap<String, Shift>()
+    private val auditEvents = Collections.synchronizedList(mutableListOf<ShiftAuditEvent>())
 
     fun openShift(storeId: String, cashierId: String?, openingFloat: Double): OpenShiftResult {
         if (storeService.getStore(storeId) == null) return OpenShiftResult.StoreNotFound
@@ -45,6 +47,7 @@ class ShiftService(
 
         val shift = Shift(storeId = storeId, cashierId = cashierId, openingFloat = openingFloat, openedAt = nowProvider())
         shifts[shift.id] = shift
+        recordAuditEvent(shift.id, ShiftAuditEventType.OPENED, cashierId, "openingFloat=$openingFloat")
         return OpenShiftResult.Success(shift)
     }
 
@@ -82,6 +85,23 @@ class ShiftService(
             closedAt = closedAt
         )
         shifts[shiftId] = updated
+
+        recordAuditEvent(
+            shiftId, ShiftAuditEventType.CLOSED, closedBy,
+            "closingCount=$closingCount expectedCash=$expectedCash variance=$variance"
+        )
+        if (variance != 0.0) {
+            recordAuditEvent(
+                shiftId, ShiftAuditEventType.DISCREPANCY_RECORDED, closedBy,
+                "expected=$expectedCash actual=$closingCount variance=$variance cause=${ShiftVarianceEngine.causeFor(variance)}"
+            )
+        }
+        if (overThreshold && closedByIsManagerOrAdmin) {
+            recordAuditEvent(
+                shiftId, ShiftAuditEventType.MANAGER_OVERRIDE, closedBy,
+                "variance=$variance threshold=$varianceThreshold reason=${note?.takeIf { it.isNotBlank() } ?: "No reason provided"}"
+            )
+        }
         return CloseShiftResult.Success(updated)
     }
 
@@ -92,6 +112,10 @@ class ShiftService(
             .filter { (storeId == null || it.storeId == storeId) && (cashierId == null || it.cashierId == cashierId) }
             .sortedByDescending { it.openedAt }
 
+    /** The full append-only audit trail for one shift, oldest first. */
+    fun listAuditEvents(shiftId: String): List<ShiftAuditEvent> =
+        synchronized(auditEvents) { auditEvents.filter { it.shiftId == shiftId } }.sortedBy { it.createdAt }
+
     /** The expected-cash figure a still-open shift would close at right now, without mutating anything. */
     fun previewExpectedCash(shiftId: String): Double? {
         val shift = shifts[shiftId] ?: return null
@@ -100,6 +124,10 @@ class ShiftService(
 
     private fun hasOpenShift(storeId: String, cashierId: String): Boolean =
         shifts.values.any { it.storeId == storeId && it.cashierId == cashierId && it.status == ShiftStatus.OPEN }
+
+    private fun recordAuditEvent(shiftId: String, type: ShiftAuditEventType, actorId: String?, detail: String?) {
+        auditEvents.add(ShiftAuditEvent(shiftId = shiftId, type = type, actorId = actorId, detail = detail, createdAt = nowProvider()))
+    }
 
     private fun computeExpectedCash(shift: Shift, asOf: Instant): Double {
         val orders = orderService.listOrders(shift.storeId, shift.openedAt, asOf)

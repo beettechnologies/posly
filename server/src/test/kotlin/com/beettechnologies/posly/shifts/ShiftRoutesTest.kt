@@ -318,4 +318,76 @@ class ShiftRoutesTest {
 
         assertEquals(HttpStatusCode.Conflict, resp.status)
     }
+
+    @Test
+    fun `the audit trail records opening and closing a shift`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val adminTok = adminToken(client)
+        val storeId = seedStoreId(client, adminTok)
+        val cashierTok = cashierToken(client)
+        val shiftId = openShift(client, cashierTok, storeId, 100.0)
+        client.post("/shifts/$shiftId/close") {
+            header(HttpHeaders.Authorization, "Bearer $cashierTok")
+            contentType(ContentType.Application.Json)
+            setBody("""{"closingCount":100.0}""")
+        }
+
+        val resp = client.get("/shifts/$shiftId/audit-events") { header(HttpHeaders.Authorization, "Bearer $adminTok") }
+
+        assertEquals(HttpStatusCode.OK, resp.status)
+        val events = Json.parseToJsonElement(resp.bodyAsText()).jsonArray
+        assertEquals(listOf("OPENED", "CLOSED"), events.map { it.jsonObject["type"]?.jsonPrimitive?.content })
+    }
+
+    @Test
+    fun `a manager override reason is logged and linked to the shift in the audit trail`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val adminTok = adminToken(client)
+        val storeId = seedStoreId(client, adminTok)
+        val cashierTok = cashierToken(client)
+        val shiftId = openShift(client, cashierTok, storeId, 100.0)
+
+        val managerTok = managerToken(client)
+        client.post("/shifts/$shiftId/close") {
+            header(HttpHeaders.Authorization, "Bearer $managerTok")
+            contentType(ContentType.Application.Json)
+            setBody("""{"closingCount":80.0,"note":"Verified with cashier, register was miscounted"}""")
+        }
+
+        val resp = client.get("/shifts/$shiftId/audit-events") { header(HttpHeaders.Authorization, "Bearer $adminTok") }
+        val events = Json.parseToJsonElement(resp.bodyAsText()).jsonArray
+        val override = events.single { it.jsonObject["type"]?.jsonPrimitive?.content == "MANAGER_OVERRIDE" }.jsonObject
+        assertEquals(shiftId, override["shiftId"]?.jsonPrimitive?.content)
+        assertTrue(override["detail"]!!.jsonPrimitive.content.contains("Verified with cashier, register was miscounted"))
+
+        val discrepancy = events.single { it.jsonObject["type"]?.jsonPrimitive?.content == "DISCREPANCY_RECORDED" }
+        assertTrue(discrepancy.jsonObject["detail"]!!.jsonPrimitive.content.contains("SHORT"))
+    }
+
+    @Test
+    fun `a cashier cannot view the audit trail`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val adminTok = adminToken(client)
+        val storeId = seedStoreId(client, adminTok)
+        val cashierTok = cashierToken(client)
+        val shiftId = openShift(client, cashierTok, storeId, 100.0)
+
+        val resp = client.get("/shifts/$shiftId/audit-events") { header(HttpHeaders.Authorization, "Bearer $cashierTok") }
+
+        assertEquals(HttpStatusCode.Forbidden, resp.status)
+    }
+
+    @Test
+    fun `fetching audit events for an unknown shift returns 404`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val adminTok = adminToken(client)
+
+        val resp = client.get("/shifts/does-not-exist/audit-events") { header(HttpHeaders.Authorization, "Bearer $adminTok") }
+
+        assertEquals(HttpStatusCode.NotFound, resp.status)
+    }
 }

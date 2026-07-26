@@ -27,3 +27,20 @@ data class Shift(
 )
 
 enum class ShiftVarianceCause { NONE, SHORT, OVER }
+
+enum class ShiftAuditEventType { OPENED, CLOSED, DISCREPANCY_RECORDED, MANAGER_OVERRIDE }
+
+/**
+ * An append-only entry in a shift's audit trail - mirrors [com.beettechnologies.posly.cart.OrderEvent]
+ * and [com.beettechnologies.posly.inventory.InventoryTransaction]: never mutated or removed once
+ * recorded, so it stays a durable record of what happened and why, independent of the mutable
+ * [Shift] row itself.
+ */
+data class ShiftAuditEvent(
+    val id: String = UUID.randomUUID().toString(),
+    val shiftId: String,
+    val type: ShiftAuditEventType,
+    val actorId: String?,
+    val detail: String?,
+    val createdAt: Instant
+)
