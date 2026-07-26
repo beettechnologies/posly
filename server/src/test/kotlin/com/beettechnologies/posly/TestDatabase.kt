@@ -57,8 +57,9 @@ object TestDatabase {
 /**
  * The [io.ktor.server.config.MapApplicationConfig] entries every `*RoutesTest.kt` splices in:
  * `database.*` points `Application.module()`'s `DatabaseFactory.init` at the same H2 instance as
- * [TestDatabase]; `backup.directory` satisfies `Application.module()`'s unconditional read of that
- * property (used to construct `BackupService`) with a throwaway location under the build directory.
+ * [TestDatabase]; `backup.directory` and `secrets.rotationGracePeriodMs` satisfy
+ * `Application.module()`'s unconditional reads of those properties (used to construct
+ * `BackupService`/`InMemorySecretsManager`) with throwaway/short-enough-for-tests values.
  */
 object TestDatabaseConfig {
     val entries: Array<Pair<String, String>> = arrayOf(
@@ -66,6 +67,7 @@ object TestDatabaseConfig {
         "database.username" to "sa",
         "database.password" to "",
         "database.maxPoolSize" to "5",
-        "backup.directory" to "build/test-backups"
+        "backup.directory" to "build/test-backups",
+        "secrets.rotationGracePeriodMs" to "86400000"
     )
 }

@@ -5,6 +5,8 @@ import com.beettechnologies.posly.audit.AuditEvent
 import com.beettechnologies.posly.audit.AuditService
 import com.beettechnologies.posly.model.Role
 import com.beettechnologies.posly.model.UserStatus
+import com.beettechnologies.posly.secrets.InMemorySecretsManager
+import com.beettechnologies.posly.secrets.SecretName
 import kotlinx.coroutines.runBlocking
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -17,7 +19,13 @@ import kotlin.test.assertTrue
 class AuthServiceTest {
 
     private val jwtService = JwtService(
-        secret = "test-secret-at-least-32-characters-long!!",
+        secretsManager = InMemorySecretsManager(
+            mapOf(
+                SecretName.JWT_SIGNING_KEY to "test-secret-at-least-32-characters-long!!",
+                SecretName.PAYMENT_WEBHOOK_SECRET to "test-webhook-secret"
+            ),
+            gracePeriodMs = 86_400_000L
+        ),
         issuer = "posly",
         audience = "posly-api",
         accessTokenExpirationMs = 900_000L,

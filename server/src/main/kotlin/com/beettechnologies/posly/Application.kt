@@ -1,7 +1,5 @@
 package com.beettechnologies.posly
 
-import com.auth0.jwt.JWT
-import com.auth0.jwt.algorithms.Algorithm
 import com.beettechnologies.posly.auth.AuthService
 import com.beettechnologies.posly.auth.ErrorResponse
 import com.beettechnologies.posly.auth.JwtService
@@ -45,6 +43,9 @@ import com.beettechnologies.posly.products.configureProductRoutes
 import com.beettechnologies.posly.products.search.configureSearchRoutes
 import com.beettechnologies.posly.reporting.ReportingService
 import com.beettechnologies.posly.reporting.configureReportingRoutes
+import com.beettechnologies.posly.secrets.InMemorySecretsManager
+import com.beettechnologies.posly.secrets.SecretName
+import com.beettechnologies.posly.secrets.configureSecretsRoutes
 import com.beettechnologies.posly.shifts.ShiftService
 import com.beettechnologies.posly.shifts.configureShiftRoutes
 import com.beettechnologies.posly.stores.StoreService
@@ -59,6 +60,7 @@ import com.beettechnologies.posly.webhooks.configureWebhookRoutes
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.http.*
+import io.ktor.http.auth.HttpAuthHeader
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.application.*
 import io.ktor.server.auth.*
@@ -86,8 +88,20 @@ fun Application.module() {
     val accessExpMs = jwtConfig.property("accessTokenExpirationMs").getString().toLong()
     val refreshExpMs = jwtConfig.property("refreshTokenExpirationMs").getString().toLong()
     val mfaExpMs = jwtConfig.property("mfaTokenExpirationMs").getString().toLong()
+    val webhookSecret = environment.config.config("payments").property("webhookSecret").getString()
+    val rotationGracePeriodMs = environment.config.config("secrets").property("rotationGracePeriodMs").getString().toLong()
 
-    val jwtService = JwtService(jwtSecret, jwtIssuer, jwtAudience, accessExpMs, refreshExpMs, mfaExpMs)
+    // The only two secrets in this codebase with genuine "many verifiers must keep working
+    // through rotation" semantics - see SECURITY_COMPLIANCE.md for why this is an in-process
+    // abstraction rather than a real Vault/KMS integration.
+    val secretsManager = InMemorySecretsManager(
+        initialSecrets = mapOf(
+            SecretName.JWT_SIGNING_KEY to jwtSecret,
+            SecretName.PAYMENT_WEBHOOK_SECRET to webhookSecret
+        ),
+        gracePeriodMs = rotationGracePeriodMs
+    )
+    val jwtService = JwtService(secretsManager, jwtIssuer, jwtAudience, accessExpMs, refreshExpMs, mfaExpMs)
     val userService = UserService()
     val ssoConfigService = SsoConfigService()
     val authService = AuthService(userService, jwtService, ssoConfigService = ssoConfigService)
@@ -109,11 +123,10 @@ fun Application.module() {
     )
     orderEventDispatcher.register(reportingService)
     val cartService = CartService(productService, storeService, taxProfileService, orderService)
-    val webhookSecret = environment.config.config("payments").property("webhookSecret").getString()
     val paymentGatewayService = PaymentGatewayService(
         SimulatorPaymentGateway(),
         orderService,
-        webhookSecret,
+        secretsManager,
         autoResolveScope = this
     )
     val offlineSyncService = OfflineSyncService(deviceRegistryService, productService, cartService, orderService)
@@ -143,13 +156,14 @@ fun Application.module() {
     install(Authentication) {
         jwt("jwt-auth") {
             realm = "posly"
-            verifier(
-                JWT.require(Algorithm.HMAC256(jwtSecret))
-                    .withIssuer(jwtIssuer)
-                    .withAudience(jwtAudience)
-                    .withClaim("type", "access")
-                    .build()
-            )
+            // A dynamic per-request verifier, not a static one: reads the incoming token's `kid`
+            // to resolve the right (current-or-previous-during-grace-period) signing key, so
+            // rotating the JWT secret via POST /ops/secrets/jwt-signing-key/rotate doesn't
+            // invalidate every access token already in a client's hands.
+            verifier { authHeader ->
+                val token = (authHeader as? HttpAuthHeader.Single)?.blob
+                token?.let { jwtService.accessTokenVerifierFor(it) }
+            }
             validate { credential ->
                 // A live check, not just a signature/expiry check: re-reads the user's CURRENT
                 // status and roleVersion on every request, so a role change or account disable
@@ -199,4 +213,5 @@ fun Application.module() {
     configureReportingRoutes(reportingService)
     configureFinanceReportRoutes(financeReportService)
     configureBackupRoutes(backupService, restoreService)
+    configureSecretsRoutes(secretsManager)
 }

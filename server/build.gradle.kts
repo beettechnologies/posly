@@ -49,4 +49,7 @@ dependencies {
     testImplementation(libs.ktor.clientContentNegotiation)
     testImplementation(libs.ktor.clientMock)
     testImplementation(libs.kotlin.testJunit)
+    // Only for PciScopeGuardTest's reflective scan of payment/refund DTOs - kotlin.reflect.full
+    // needs this on the classpath at runtime, not just kotlin-stdlib's built-in KClass.
+    testImplementation(libs.kotlin.reflect)
 }

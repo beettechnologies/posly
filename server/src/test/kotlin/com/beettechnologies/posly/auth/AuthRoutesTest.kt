@@ -2,6 +2,8 @@ package com.beettechnologies.posly.auth
 
 import com.beettechnologies.posly.TestDatabase
 import com.beettechnologies.posly.TestDatabaseConfig
+import com.beettechnologies.posly.secrets.InMemorySecretsManager
+import com.beettechnologies.posly.secrets.SecretName
 
 import com.beettechnologies.posly.module
 import io.ktor.client.plugins.contentnegotiation.*
@@ -189,7 +191,13 @@ class AuthRoutesTest {
 
         // Directly exercise AuthService + JwtService for MFA flow
         val jwtService = JwtService(
-            secret = "test-secret-at-least-32-characters-long!!",
+            secretsManager = InMemorySecretsManager(
+                mapOf(
+                    SecretName.JWT_SIGNING_KEY to "test-secret-at-least-32-characters-long!!",
+                    SecretName.PAYMENT_WEBHOOK_SECRET to "test-webhook-secret"
+                ),
+                gracePeriodMs = 86_400_000L
+            ),
             issuer = "posly",
             audience = "posly-api",
             accessTokenExpirationMs = 900_000L,
@@ -218,7 +226,13 @@ class AuthRoutesTest {
         configureApp()
         val mfaSecret = MfaService.generateSecret()
         val jwtService = JwtService(
-            secret = "test-secret-at-least-32-characters-long!!",
+            secretsManager = InMemorySecretsManager(
+                mapOf(
+                    SecretName.JWT_SIGNING_KEY to "test-secret-at-least-32-characters-long!!",
+                    SecretName.PAYMENT_WEBHOOK_SECRET to "test-webhook-secret"
+                ),
+                gracePeriodMs = 86_400_000L
+            ),
             issuer = "posly",
             audience = "posly-api",
             accessTokenExpirationMs = 900_000L,

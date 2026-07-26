@@ -1,5 +1,6 @@
 package com.beettechnologies.posly.payments
 
+import com.beettechnologies.posly.TestDatabase
 import com.beettechnologies.posly.cart.Cart
 import com.beettechnologies.posly.cart.CartItem
 import com.beettechnologies.posly.cart.CartTotals
@@ -10,6 +11,9 @@ import com.beettechnologies.posly.cart.RefundLineItemInput
 import com.beettechnologies.posly.gateway.GatewayException
 import com.beettechnologies.posly.gateway.RetryPolicy
 import com.beettechnologies.posly.products.TaxCategory
+import com.beettechnologies.posly.secrets.InMemorySecretsManager
+import com.beettechnologies.posly.secrets.SecretName
+import com.beettechnologies.posly.secrets.SecretsManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -17,6 +21,7 @@ import kotlinx.coroutines.runBlocking
 import java.time.Instant
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -50,7 +55,25 @@ private fun hmac(secret: String, message: String): String {
     return mac.doFinal(message.toByteArray()).joinToString("") { "%02x".format(it) }
 }
 
+/** A settable "now", for tests that rotate a secret and need to advance past its grace period. */
+private class TestClock(var instant: Instant)
+
+private fun newSecretsManager(
+    webhookSecret: String = WEBHOOK_SECRET,
+    gracePeriodMs: Long = 86_400_000L,
+    nowProvider: () -> Instant = { Instant.now() }
+): InMemorySecretsManager = InMemorySecretsManager(
+    mapOf(SecretName.JWT_SIGNING_KEY to "unused-in-these-tests", SecretName.PAYMENT_WEBHOOK_SECRET to webhookSecret),
+    gracePeriodMs = gracePeriodMs,
+    nowProvider = nowProvider
+)
+
 class PaymentGatewayServiceTest {
+
+    @BeforeTest
+    fun resetDb() {
+        TestDatabase.reset()
+    }
 
     private fun seedOrder(orderService: OrderService, amount: Double = 10.0): Order {
         val now = Instant.parse("2026-01-01T00:00:00Z")
@@ -68,9 +91,12 @@ class PaymentGatewayServiceTest {
         return orderService.createOrder(cart, totals, "checkout-key-1")
     }
 
-    private fun newService(gateway: PaymentGateway = SimulatorPaymentGateway()): Pair<PaymentGatewayService, OrderService> {
+    private fun newService(
+        gateway: PaymentGateway = SimulatorPaymentGateway(),
+        secretsManager: SecretsManager = newSecretsManager()
+    ): Pair<PaymentGatewayService, OrderService> {
         val orderService = OrderService()
-        val service = PaymentGatewayService(gateway, orderService, WEBHOOK_SECRET, retryPolicy = FAST_RETRY)
+        val service = PaymentGatewayService(gateway, orderService, secretsManager, retryPolicy = FAST_RETRY)
         return service to orderService
     }
 
@@ -79,7 +105,7 @@ class PaymentGatewayServiceTest {
         val service = PaymentGatewayService(
             SimulatorPaymentGateway(),
             orderService,
-            WEBHOOK_SECRET,
+            newSecretsManager(),
             retryPolicy = FAST_RETRY,
             autoResolveScope = CoroutineScope(Dispatchers.Default),
             autoResolveDelayMillis = 5
@@ -175,6 +201,35 @@ class PaymentGatewayServiceTest {
         assertFalse(service.verifySignature(body, hmac("wrong-secret", body)))
         assertFalse(service.verifySignature(body + "tampered", validSignature))
         assertFalse(service.verifySignature(body, null))
+    }
+
+    @Test
+    fun `signature verification accepts the previous webhook secret during its grace period after rotation`() {
+        val clock = TestClock(Instant.parse("2026-01-01T00:00:00Z"))
+        val secretsManager = newSecretsManager(gracePeriodMs = 3_600_000L, nowProvider = { clock.instant })
+        val (service, _) = newService(secretsManager = secretsManager)
+        val body = """{"eventId":"evt-1"}"""
+        val signatureFromOldSecret = hmac(WEBHOOK_SECRET, body)
+
+        secretsManager.rotate(SecretName.PAYMENT_WEBHOOK_SECRET, actorUserId = "admin-1")
+
+        // Zero downtime: a webhook signed with the pre-rotation secret (e.g. already in flight
+        // from the gateway) still verifies immediately after rotation.
+        assertTrue(service.verifySignature(body, signatureFromOldSecret))
+    }
+
+    @Test
+    fun `signature verification rejects the previous webhook secret once its grace period elapses`() {
+        val clock = TestClock(Instant.parse("2026-01-01T00:00:00Z"))
+        val secretsManager = newSecretsManager(gracePeriodMs = 3_600_000L, nowProvider = { clock.instant })
+        val (service, _) = newService(secretsManager = secretsManager)
+        val body = """{"eventId":"evt-1"}"""
+        val signatureFromOldSecret = hmac(WEBHOOK_SECRET, body)
+
+        secretsManager.rotate(SecretName.PAYMENT_WEBHOOK_SECRET, actorUserId = "admin-1")
+        clock.instant = clock.instant.plusMillis(3_600_001L)
+
+        assertFalse(service.verifySignature(body, signatureFromOldSecret))
     }
 
     @Test

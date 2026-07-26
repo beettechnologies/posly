@@ -7,6 +7,8 @@ import com.beettechnologies.posly.cart.RefundPreviewResult
 import com.beettechnologies.posly.cart.RefundResult
 import com.beettechnologies.posly.gateway.GatewayException
 import com.beettechnologies.posly.gateway.RetryPolicy
+import com.beettechnologies.posly.secrets.SecretName
+import com.beettechnologies.posly.secrets.SecretsManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -67,7 +69,7 @@ sealed class RefundOrderResult {
 class PaymentGatewayService(
     private val gateway: PaymentGateway,
     private val orderService: OrderService,
-    private val webhookSecret: String,
+    private val secretsManager: SecretsManager,
     private val retryPolicy: RetryPolicy = RetryPolicy(),
     private val nowProvider: () -> Instant = { Instant.now() },
     private val autoResolveScope: CoroutineScope? = null,
@@ -124,11 +126,18 @@ class PaymentGatewayService(
 
     fun getPayment(id: String): GatewayPayment? = payments[id]
 
-    /** Verifies an HMAC-SHA256 signature over the exact raw webhook body, using a constant-time comparison. */
+    /**
+     * Verifies an HMAC-SHA256 signature over the exact raw webhook body, using a constant-time
+     * comparison. Accepts a signature made with *any* currently-valid webhook secret version -
+     * the current one, or a previous one still within its post-rotation grace period - so an
+     * in-flight webhook signed just before a rotation isn't rejected.
+     */
     fun verifySignature(rawBody: String, signatureHeader: String?): Boolean {
         if (signatureHeader.isNullOrBlank()) return false
-        val expected = hmacSha256Hex(webhookSecret, rawBody)
-        return MessageDigest.isEqual(expected.toByteArray(), signatureHeader.toByteArray())
+        return secretsManager.validVersions(SecretName.PAYMENT_WEBHOOK_SECRET).any { version ->
+            val expected = hmacSha256Hex(version.value, rawBody)
+            MessageDigest.isEqual(expected.toByteArray(), signatureHeader.toByteArray())
+        }
     }
 
     /**

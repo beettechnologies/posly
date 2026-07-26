@@ -37,7 +37,8 @@ enum class AuditEvent {
     BACKUP_COMPLETED,
     BACKUP_FAILED,
     RESTORE_DRILL_COMPLETED,
-    RESTORE_DRILL_FAILED
+    RESTORE_DRILL_FAILED,
+    SECRET_ROTATED
 }
 
 data class AuditRecord(
