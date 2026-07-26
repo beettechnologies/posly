@@ -42,6 +42,24 @@ fun interface OrderEventListener {
     fun onEvent(order: Order, type: OrderEventType)
 }
 
+/**
+ * Dispatches every event to a mutable, appendable list of listeners. Lets a listener that itself
+ * depends on [OrderService] (e.g. a reporting pipeline needing to query orders) register *after*
+ * [OrderService] is constructed, instead of forcing a circular construction order - [register] is
+ * called post-construction, well before any real event can fire.
+ */
+class CompositeOrderEventListener : OrderEventListener {
+    private val listeners = mutableListOf<OrderEventListener>()
+
+    fun register(listener: OrderEventListener) {
+        listeners += listener
+    }
+
+    override fun onEvent(order: Order, type: OrderEventType) {
+        listeners.forEach { it.onEvent(order, type) }
+    }
+}
+
 private sealed class RefundValidation {
     data class Valid(val lineItems: List<RefundLineItem>, val amount: Double) : RefundValidation()
     data object OrderNotFound : RefundValidation()

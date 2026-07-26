@@ -19,6 +19,7 @@ import io.micrometer.core.instrument.binder.jvm.ClassLoaderMetrics
 import io.micrometer.core.instrument.binder.jvm.JvmGcMetrics
 import io.micrometer.core.instrument.binder.jvm.JvmMemoryMetrics
 import io.micrometer.core.instrument.binder.jvm.JvmThreadMetrics
+import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.binder.system.ProcessorMetrics
 import io.micrometer.prometheusmetrics.PrometheusConfig
 import io.micrometer.prometheusmetrics.PrometheusMeterRegistry
@@ -29,7 +30,8 @@ import java.util.UUID
 
 private const val CORRELATION_ID_HEADER = "X-Correlation-Id"
 
-fun Application.configureObservability() {
+/** Returns the Prometheus [MeterRegistry] so other services (e.g. reporting pipeline run counters) can publish their own metrics onto the same `/metrics` endpoint. */
+fun Application.configureObservability(): MeterRegistry {
     val serviceName = environment.config.propertyOrNull("observability.serviceName")?.getString() ?: "posly-server"
     val environmentName = environment.config.propertyOrNull("observability.environment")?.getString()
         ?: System.getenv("ENVIRONMENT")
@@ -94,4 +96,6 @@ fun Application.configureObservability() {
             )
         }
     }
+
+    return prometheusRegistry
 }

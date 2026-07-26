@@ -10,6 +10,7 @@ import com.beettechnologies.posly.auth.UserService
 import com.beettechnologies.posly.auth.configureAuthRoutes
 import com.beettechnologies.posly.auth.configureUserRoutes
 import com.beettechnologies.posly.cart.CartService
+import com.beettechnologies.posly.cart.CompositeOrderEventListener
 import com.beettechnologies.posly.cart.OrderService
 import com.beettechnologies.posly.cart.configureCartRoutes
 import com.beettechnologies.posly.cart.configureOrderRoutes
@@ -36,6 +37,8 @@ import com.beettechnologies.posly.printing.configurePrintRoutes
 import com.beettechnologies.posly.products.ProductService
 import com.beettechnologies.posly.products.configureProductRoutes
 import com.beettechnologies.posly.products.search.configureSearchRoutes
+import com.beettechnologies.posly.reporting.ReportingService
+import com.beettechnologies.posly.reporting.configureReportingRoutes
 import com.beettechnologies.posly.shifts.ShiftService
 import com.beettechnologies.posly.shifts.configureShiftRoutes
 import com.beettechnologies.posly.stores.StoreService
@@ -65,6 +68,8 @@ import kotlinx.serialization.json.Json
 fun main(args: Array<String>): Unit = EngineMain.main(args)
 
 fun Application.module() {
+    val meterRegistry = configureObservability()
+
     val jwtConfig = environment.config.config("jwt")
     val jwtSecret = jwtConfig.property("secret").getString()
     val jwtIssuer = jwtConfig.property("issuer").getString()
@@ -84,9 +89,16 @@ fun Application.module() {
     val inventoryService = InventoryService(productService, storeService)
     val stockCountService = StockCountService(inventoryService, productService, storeService)
     val webhookHttpClient = HttpClient(CIO)
+    val orderEventDispatcher = CompositeOrderEventListener()
+    val orderService = OrderService(eventListener = orderEventDispatcher)
     val webhookService = WebhookService(webhookHttpClient, deliveryScope = this)
-    val orderService = OrderService(eventListener = webhookService)
+    orderEventDispatcher.register(webhookService)
     val shiftService = ShiftService(storeService, orderService)
+    val reportingService = ReportingService(
+        orderService, storeService, stockCountService, shiftService,
+        pipelineScope = this, meterRegistry = meterRegistry
+    )
+    orderEventDispatcher.register(reportingService)
     val cartService = CartService(productService, storeService, taxProfileService, orderService)
     val webhookSecret = environment.config.config("payments").property("webhookSecret").getString()
     val paymentGatewayService = PaymentGatewayService(
@@ -100,8 +112,6 @@ fun Application.module() {
     val printerRegistryService = PrinterRegistryService()
     val printService = PrintService(orderService, printerRegistryService, SimulatorPrintGateway())
     val emailService = EmailService(orderService, SimulatorEmailGateway())
-
-    configureObservability()
 
     install(ContentNegotiation) {
         json(Json { ignoreUnknownKeys = true })
@@ -169,4 +179,5 @@ fun Application.module() {
     configureSyncRoutes(offlineSyncService)
     configurePrintRoutes(printerRegistryService, printService)
     configureEmailRoutes(emailService)
+    configureReportingRoutes(reportingService)
 }
