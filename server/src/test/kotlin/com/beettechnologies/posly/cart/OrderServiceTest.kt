@@ -368,4 +368,62 @@ class OrderServiceTest {
         assertTrue(atEnd.id !in result.map { it.id }, "the window's end is exclusive")
         assertTrue(otherStore.id !in result.map { it.id }, "orders from a different store must be excluded")
     }
+
+    @Test
+    fun `creating an order notifies the event listener with type CREATED`() {
+        val events = mutableListOf<Pair<Order, OrderEventType>>()
+        val service = OrderService(eventListener = OrderEventListener { order, type -> events += order to type })
+
+        val order = service.createOrder(seedCart(), seedTotals(), "key-1")
+
+        assertEquals(listOf(order.id to OrderEventType.CREATED), events.map { it.first.id to it.second })
+    }
+
+    @Test
+    fun `fully paying an order notifies the event listener with type PAYMENT_CONFIRMED`() {
+        val events = mutableListOf<OrderEventType>()
+        val service = OrderService(eventListener = OrderEventListener { _, type -> events += type })
+        val order = service.createOrder(seedCart(), seedTotals(), "key-1")
+
+        service.confirmPayment(order.id, "CARD", 10.0, null, "cashier-1")
+
+        assertEquals(listOf(OrderEventType.CREATED, OrderEventType.PAYMENT_CONFIRMED), events)
+    }
+
+    @Test
+    fun `a partial tender does not notify the listener until the order is fully paid`() {
+        val events = mutableListOf<OrderEventType>()
+        val service = OrderService(eventListener = OrderEventListener { _, type -> events += type })
+        val order = service.createOrder(seedCart(), seedTotals(), "key-1")
+
+        service.confirmPayment(order.id, "CASH", 4.0, null, "cashier-1")
+        assertEquals(listOf(OrderEventType.CREATED), events, "a partial tender must not fire PAYMENT_CONFIRMED")
+
+        service.confirmPayment(order.id, "GIFT_CARD", 6.0, null, "cashier-1")
+        assertEquals(listOf(OrderEventType.CREATED, OrderEventType.PAYMENT_CONFIRMED), events)
+    }
+
+    @Test
+    fun `a rejected payment attempt does not notify the listener`() {
+        val events = mutableListOf<OrderEventType>()
+        val service = OrderService(eventListener = OrderEventListener { _, type -> events += type })
+        val order = service.createOrder(seedCart(), seedTotals(), "key-1")
+
+        service.confirmPayment(order.id, "CARD", 999.0, null, "cashier-1")
+
+        assertEquals(listOf(OrderEventType.CREATED), events)
+    }
+
+    @Test
+    fun `refunding does not notify the listener - there is no webhook event type for it yet`() {
+        val events = mutableListOf<OrderEventType>()
+        val service = OrderService(eventListener = OrderEventListener { _, type -> events += type })
+        val order = service.createOrder(seedCart(), seedTotals(), "key-1")
+        service.confirmPayment(order.id, "CARD", 10.0, null, "cashier-1")
+        val itemId = order.items.single().id
+
+        service.refund(order.id, "refund-1", "MANUAL", listOf(RefundLineItemInput(itemId, quantity = 1)), "x", "manager-1")
+
+        assertEquals(listOf(OrderEventType.CREATED, OrderEventType.PAYMENT_CONFIRMED), events)
+    }
 }

@@ -40,6 +40,10 @@ import com.beettechnologies.posly.stores.configureTaxProfileRoutes
 import com.beettechnologies.posly.stores.configureTaxRoutes
 import com.beettechnologies.posly.sync.OfflineSyncService
 import com.beettechnologies.posly.sync.configureSyncRoutes
+import com.beettechnologies.posly.webhooks.WebhookService
+import com.beettechnologies.posly.webhooks.configureWebhookRoutes
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.cio.CIO
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.application.*
@@ -73,7 +77,9 @@ fun Application.module() {
     val storeService = StoreService(taxProfileService)
     val inventoryService = InventoryService(productService, storeService)
     val stockCountService = StockCountService(inventoryService, productService, storeService)
-    val orderService = OrderService()
+    val webhookHttpClient = HttpClient(CIO)
+    val webhookService = WebhookService(webhookHttpClient, deliveryScope = this)
+    val orderService = OrderService(eventListener = webhookService)
     val shiftService = ShiftService(storeService, orderService)
     val cartService = CartService(productService, storeService, taxProfileService, orderService)
     val webhookSecret = environment.config.config("payments").property("webhookSecret").getString()
@@ -138,6 +144,7 @@ fun Application.module() {
     configureInventoryRoutes(inventoryService)
     configureStockCountRoutes(stockCountService)
     configureShiftRoutes(shiftService)
+    configureWebhookRoutes(webhookService)
     configureCartRoutes(cartService)
     configureOrderRoutes(orderService, paymentGatewayService, inventoryService)
     configurePaymentRoutes(paymentGatewayService)

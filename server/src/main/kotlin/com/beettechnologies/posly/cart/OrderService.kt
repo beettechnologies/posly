@@ -31,6 +31,17 @@ sealed class RefundResult {
     data class InvalidLineItem(val message: String) : RefundResult()
 }
 
+/**
+ * Notified of order lifecycle milestones ([OrderEventType.CREATED] and, once an order becomes
+ * fully paid, [OrderEventType.PAYMENT_CONFIRMED]) - the single reliable hook for integrations
+ * (e.g. outbound webhooks) regardless of which caller triggered the change (checkout, offline
+ * sync, a terminal webhook, or a manual tender). Deliberately generic rather than
+ * webhook-specific, so this file stays unaware that webhooks exist.
+ */
+fun interface OrderEventListener {
+    fun onEvent(order: Order, type: OrderEventType)
+}
+
 private sealed class RefundValidation {
     data class Valid(val lineItems: List<RefundLineItem>, val amount: Double) : RefundValidation()
     data object OrderNotFound : RefundValidation()
@@ -47,7 +58,8 @@ private sealed class RefundValidation {
  */
 class OrderService(
     private val nowProvider: () -> Instant = { Instant.now() },
-    private val refundWindowDays: Long = 90
+    private val refundWindowDays: Long = 90,
+    private val eventListener: OrderEventListener? = null
 ) {
 
     private val orders = ConcurrentHashMap<String, Order>()
@@ -67,6 +79,7 @@ class OrderService(
         )
         orders[order.id] = order
         recordEvent(order.id, OrderEventType.CREATED, cart.createdBy, "status=PENDING")
+        eventListener?.onEvent(order, OrderEventType.CREATED)
         return order
     }
 
@@ -138,8 +151,14 @@ class OrderService(
                 }
             }
         }
-        if (outcome is ConfirmPaymentResult.Success) {
+        val success = outcome as? ConfirmPaymentResult.Success
+        if (success != null) {
             recordEvent(orderId, OrderEventType.PAYMENT_CONFIRMED, actorId, "method=$method amount=$amount")
+            // Only a fully-settled order counts as "payment succeeded" for integrations - a partial/
+            // split tender is still an in-progress sale, not a completed one.
+            if (success.order.status == OrderStatus.PAID) {
+                eventListener?.onEvent(success.order, OrderEventType.PAYMENT_CONFIRMED)
+            }
         }
         return outcome
     }

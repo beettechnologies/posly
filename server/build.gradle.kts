@@ -31,7 +31,11 @@ dependencies {
     implementation(libs.lucene.core)
     implementation(libs.lucene.analysis.common)
     implementation(libs.pdfbox)
+    implementation(libs.ktor.clientCore)
+    implementation(libs.ktor.clientCio)
+    implementation(libs.ktor.clientContentNegotiationMultiplatform)
     testImplementation(libs.ktor.serverTestHost)
     testImplementation(libs.ktor.clientContentNegotiation)
+    testImplementation(libs.ktor.clientMock)
     testImplementation(libs.kotlin.testJunit)
 }
