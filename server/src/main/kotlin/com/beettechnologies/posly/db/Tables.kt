@@ -135,3 +135,15 @@ object ShiftAuditEventsTable : Table("shift_audit_events") {
     val createdAt = timestamp("created_at")
     override val primaryKey = PrimaryKey(id)
 }
+
+object FeatureFlagsTable : Table("feature_flags") {
+    val id = varchar("id", 36)
+    val key = varchar("key", 100).uniqueIndex()
+    val description = varchar("description", 500)
+    val enabled = bool("enabled")
+    val rolloutPercentage = integer("rollout_percentage")
+    val enabledStoreIds = jsonb<List<String>>("enabled_store_ids", json, ListSerializer(String.serializer()), true)
+    val createdAt = long("created_at")
+    val updatedAt = long("updated_at")
+    override val primaryKey = PrimaryKey(id)
+}

@@ -1,5 +1,6 @@
 package com.beettechnologies.posly
 
+import com.beettechnologies.posly.db.FeatureFlagsTable
 import com.beettechnologies.posly.db.OrderEventsTable
 import com.beettechnologies.posly.db.OrdersTable
 import com.beettechnologies.posly.db.ProductImagesTable
@@ -34,7 +35,8 @@ object TestDatabase {
         transaction {
             SchemaUtils.create(
                 StoresTable, TaxProfilesTable, ProductsTable, ProductImagesTable,
-                UsersTable, OrdersTable, OrderEventsTable, ShiftsTable, ShiftAuditEventsTable
+                UsersTable, OrdersTable, OrderEventsTable, ShiftsTable, ShiftAuditEventsTable,
+                FeatureFlagsTable
             )
         }
     }
@@ -50,6 +52,7 @@ object TestDatabase {
             UsersTable.deleteAll()
             TaxProfilesTable.deleteAll()
             StoresTable.deleteAll()
+            FeatureFlagsTable.deleteAll()
         }
     }
 }

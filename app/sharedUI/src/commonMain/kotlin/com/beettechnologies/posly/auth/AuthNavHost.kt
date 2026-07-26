@@ -16,6 +16,8 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.savedstate.read
+import com.beettechnologies.posly.admin.FeatureFlagFormScreen
+import com.beettechnologies.posly.admin.FeatureFlagListScreen
 import com.beettechnologies.posly.admin.FinanceReportsScreen
 import com.beettechnologies.posly.admin.ImportWizardScreen
 import com.beettechnologies.posly.admin.SsoConfigScreen
@@ -60,6 +62,8 @@ private const val ROUTE_IMPORT_PRODUCTS = "importProducts"
 private const val ROUTE_MANAGER_DASHBOARD = "managerDashboard"
 private const val ROUTE_FINANCE_REPORTS = "financeReports"
 private const val ROUTE_TRANSACTION_LIST = "transactionList"
+private const val ROUTE_FEATURE_FLAGS = "featureFlags"
+private const val ROUTE_FEATURE_FLAG_FORM = "featureFlagForm"
 
 private data class TransactionListArgs(
     val storeId: String,
@@ -162,7 +166,8 @@ fun AuthNavHost(
                 onManageUsers = { navController.navigate(ROUTE_USERS) },
                 onImportProducts = { navController.navigate(ROUTE_IMPORT_PRODUCTS) },
                 onManageDashboard = { navController.navigate(ROUTE_MANAGER_DASHBOARD) },
-                onFinanceReports = { navController.navigate(ROUTE_FINANCE_REPORTS) }
+                onFinanceReports = { navController.navigate(ROUTE_FINANCE_REPORTS) },
+                onManageFeatureFlags = { navController.navigate(ROUTE_FEATURE_FLAGS) }
             )
         }
         composable(ROUTE_SALE) {
@@ -264,6 +269,18 @@ fun AuthNavHost(
         }
         composable(ROUTE_FINANCE_REPORTS) {
             FinanceReportsScreen(onBack = { navController.popBackStack() })
+        }
+        composable(ROUTE_FEATURE_FLAGS) {
+            FeatureFlagListScreen(
+                onCreateFlag = { navController.navigate(ROUTE_FEATURE_FLAG_FORM) },
+                onBack = { navController.popBackStack() }
+            )
+        }
+        composable(ROUTE_FEATURE_FLAG_FORM) {
+            FeatureFlagFormScreen(
+                onDone = { navController.popBackStack() },
+                onBack = { navController.popBackStack() }
+            )
         }
         composable(ROUTE_TRANSACTION_LIST) {
             val args = pendingTransactionListArgs

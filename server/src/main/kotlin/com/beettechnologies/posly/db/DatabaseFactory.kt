@@ -39,7 +39,8 @@ object DatabaseFactory {
                 OrdersTable,
                 OrderEventsTable,
                 ShiftsTable,
-                ShiftAuditEventsTable
+                ShiftAuditEventsTable,
+                FeatureFlagsTable
             )
         }
     }

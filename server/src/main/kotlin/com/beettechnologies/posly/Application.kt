@@ -25,6 +25,8 @@ import com.beettechnologies.posly.email.SimulatorEmailGateway
 import com.beettechnologies.posly.email.configureEmailRoutes
 import com.beettechnologies.posly.finance.FinanceReportService
 import com.beettechnologies.posly.finance.configureFinanceReportRoutes
+import com.beettechnologies.posly.flags.FeatureFlagService
+import com.beettechnologies.posly.flags.configureFeatureFlagRoutes
 import com.beettechnologies.posly.inventory.InventoryService
 import com.beettechnologies.posly.inventory.StockCountService
 import com.beettechnologies.posly.inventory.configureInventoryRoutes
@@ -142,6 +144,7 @@ fun Application.module() {
     val backupDirectory = environment.config.config("backup").property("directory").getString()
     val backupService = BackupService(jdbcUrl, backupDirectory, scope = this)
     val restoreService = RestoreService(backupService, productionJdbcUrl = jdbcUrl)
+    val featureFlagService = FeatureFlagService(meterRegistry)
 
     install(ContentNegotiation) {
         json(Json { ignoreUnknownKeys = true })
@@ -214,4 +217,5 @@ fun Application.module() {
     configureFinanceReportRoutes(financeReportService)
     configureBackupRoutes(backupService, restoreService)
     configureSecretsRoutes(secretsManager)
+    configureFeatureFlagRoutes(featureFlagService)
 }
