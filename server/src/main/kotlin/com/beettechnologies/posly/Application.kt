@@ -9,6 +9,9 @@ import com.beettechnologies.posly.auth.SsoConfigService
 import com.beettechnologies.posly.auth.UserService
 import com.beettechnologies.posly.auth.configureAuthRoutes
 import com.beettechnologies.posly.auth.configureUserRoutes
+import com.beettechnologies.posly.backup.BackupService
+import com.beettechnologies.posly.backup.RestoreService
+import com.beettechnologies.posly.backup.configureBackupRoutes
 import com.beettechnologies.posly.cart.CartService
 import com.beettechnologies.posly.cart.CompositeOrderEventListener
 import com.beettechnologies.posly.cart.OrderService
@@ -16,6 +19,7 @@ import com.beettechnologies.posly.cart.configureCartRoutes
 import com.beettechnologies.posly.cart.configureOrderRoutes
 import com.beettechnologies.posly.catalog.ProductImportService
 import com.beettechnologies.posly.catalog.configureProductImportRoutes
+import com.beettechnologies.posly.db.DatabaseFactory
 import com.beettechnologies.posly.devices.DeviceRegistryService
 import com.beettechnologies.posly.devices.configureDeviceRoutes
 import com.beettechnologies.posly.email.EmailService
@@ -70,6 +74,9 @@ import kotlinx.serialization.json.Json
 fun main(args: Array<String>): Unit = EngineMain.main(args)
 
 fun Application.module() {
+    val databaseConfig = environment.config.config("database")
+    DatabaseFactory.init(databaseConfig)
+    val jdbcUrl = databaseConfig.property("jdbcUrl").getString()
     val meterRegistry = configureObservability()
 
     val jwtConfig = environment.config.config("jwt")
@@ -119,6 +126,9 @@ fun Application.module() {
         orderService, shiftService, storeService, emailGateway,
         scheduleScope = this
     )
+    val backupDirectory = environment.config.config("backup").property("directory").getString()
+    val backupService = BackupService(jdbcUrl, backupDirectory, scope = this)
+    val restoreService = RestoreService(backupService, productionJdbcUrl = jdbcUrl)
 
     install(ContentNegotiation) {
         json(Json { ignoreUnknownKeys = true })
@@ -188,4 +198,5 @@ fun Application.module() {
     configureEmailRoutes(emailService)
     configureReportingRoutes(reportingService)
     configureFinanceReportRoutes(financeReportService)
+    configureBackupRoutes(backupService, restoreService)
 }

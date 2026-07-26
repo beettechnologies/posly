@@ -1,5 +1,6 @@
 package com.beettechnologies.posly.auth
 
+import com.beettechnologies.posly.TestDatabase
 import com.beettechnologies.posly.audit.AuditEvent
 import com.beettechnologies.posly.audit.AuditService
 import com.beettechnologies.posly.model.Role
@@ -26,6 +27,7 @@ class AuthServiceTest {
 
     @BeforeTest
     fun clearAudit() {
+        TestDatabase.reset()
         AuditService.clearForTests()
     }
 

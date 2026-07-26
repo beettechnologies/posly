@@ -35,6 +35,16 @@ dependencies {
     implementation(libs.ktor.clientCore)
     implementation(libs.ktor.clientCio)
     implementation(libs.ktor.clientContentNegotiationMultiplatform)
+    implementation(libs.exposed.core)
+    implementation(libs.exposed.dao)
+    implementation(libs.exposed.jdbc)
+    implementation(libs.exposed.javaTime)
+    implementation(libs.exposed.json)
+    implementation(libs.postgresql)
+    implementation(libs.hikaricp)
+    // Runtime (not just test-only): application.conf's zero-config local/dev default is H2 -
+    // real deployments override DATABASE_URL to point at Postgres instead.
+    implementation(libs.h2)
     testImplementation(libs.ktor.serverTestHost)
     testImplementation(libs.ktor.clientContentNegotiation)
     testImplementation(libs.ktor.clientMock)

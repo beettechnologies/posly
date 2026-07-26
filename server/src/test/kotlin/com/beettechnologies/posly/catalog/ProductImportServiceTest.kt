@@ -1,5 +1,6 @@
 package com.beettechnologies.posly.catalog
 
+import com.beettechnologies.posly.TestDatabase
 import com.beettechnologies.posly.products.ProductService
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -27,6 +28,7 @@ class ProductImportServiceTest {
 
     @BeforeTest
     fun setUp() {
+        TestDatabase.reset()
         productService = ProductService()
         importService = ProductImportService(productService)
     }

@@ -1,8 +1,10 @@
 package com.beettechnologies.posly.stores
 
+import kotlinx.serialization.Serializable
 import java.math.RoundingMode
 import java.util.UUID
 
+@Serializable
 data class Address(
     val line1: String,
     val line2: String? = null,
@@ -25,6 +27,7 @@ data class Store(
 
 enum class PricingMode { INCLUSIVE, EXCLUSIVE }
 
+@Serializable
 data class TaxRate(
     val name: String,
     val ratePercent: Double,

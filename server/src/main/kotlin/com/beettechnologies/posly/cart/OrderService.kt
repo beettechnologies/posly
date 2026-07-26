@@ -1,8 +1,21 @@
 package com.beettechnologies.posly.cart
 
+import com.beettechnologies.posly.db.OrderEventsTable
+import com.beettechnologies.posly.db.OrdersTable
+import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.greaterEq
+import org.jetbrains.exposed.v1.core.less
+import org.jetbrains.exposed.v1.core.vendors.ForUpdateOption
+import org.jetbrains.exposed.v1.jdbc.deleteWhere
+import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.selectAll
+import org.jetbrains.exposed.v1.jdbc.transactions.transaction
+import org.jetbrains.exposed.v1.jdbc.update
 import java.time.Instant
 import java.time.temporal.ChronoUnit
-import java.util.concurrent.ConcurrentHashMap
 
 sealed class ConfirmPaymentResult {
     data class Success(val order: Order) : ConfirmPaymentResult()
@@ -68,6 +81,29 @@ private sealed class RefundValidation {
     data class InvalidLineItem(val message: String) : RefundValidation()
 }
 
+private fun rowToOrder(row: ResultRow) = Order(
+    id = row[OrdersTable.id],
+    cartId = row[OrdersTable.cartId],
+    storeId = row[OrdersTable.storeId],
+    createdBy = row[OrdersTable.createdBy],
+    items = row[OrdersTable.items],
+    discount = row[OrdersTable.discount],
+    totals = row[OrdersTable.totals],
+    idempotencyKey = row[OrdersTable.idempotencyKey],
+    checkedOutAt = row[OrdersTable.checkedOutAt],
+    status = OrderStatus.valueOf(row[OrdersTable.status]),
+    payments = row[OrdersTable.payments],
+    refunds = row[OrdersTable.refunds]
+)
+
+private fun rowToOrderEvent(row: ResultRow) = OrderEvent(
+    timestamp = row[OrderEventsTable.timestamp],
+    orderId = row[OrderEventsTable.orderId],
+    type = OrderEventType.valueOf(row[OrderEventsTable.type]),
+    actorId = row[OrderEventsTable.actorId],
+    detail = row[OrderEventsTable.detail]
+)
+
 /**
  * Owns the Order aggregate and its PENDING -> PAID -> (PARTIALLY_REFUNDED ->) REFUNDED state
  * machine, plus an append-only audit trail of every transition. Orders are created by
@@ -79,9 +115,6 @@ class OrderService(
     private val refundWindowDays: Long = 90,
     private val eventListener: OrderEventListener? = null
 ) {
-
-    private val orders = ConcurrentHashMap<String, Order>()
-    private val events = mutableListOf<OrderEvent>()
 
     fun createOrder(cart: Cart, totals: CartTotals, idempotencyKey: String, checkedOutAt: Instant = nowProvider()): Order {
         val order = Order(
@@ -95,25 +128,36 @@ class OrderService(
             checkedOutAt = checkedOutAt,
             status = OrderStatus.PENDING
         )
-        orders[order.id] = order
-        recordEvent(order.id, OrderEventType.CREATED, cart.createdBy, "status=PENDING")
+        transaction {
+            persistNewOrder(order)
+            recordEvent(order.id, OrderEventType.CREATED, cart.createdBy, "status=PENDING")
+        }
         eventListener?.onEvent(order, OrderEventType.CREATED)
         return order
     }
 
     /** Reverts a just-created order that never made it into a consistently committed cart. */
     fun deleteOrder(id: String) {
-        orders.remove(id)
-        synchronized(events) { events.removeAll { it.orderId == id } }
+        transaction {
+            OrderEventsTable.deleteWhere { OrderEventsTable.orderId eq id }
+            OrdersTable.deleteWhere { OrdersTable.id eq id }
+        }
     }
 
-    fun getOrder(id: String): Order? = orders[id]
+    fun getOrder(id: String): Order? = transaction {
+        OrdersTable.selectAll().where { OrdersTable.id eq id }.singleOrNull()?.let { rowToOrder(it) }
+    }
 
-    fun count(): Int = orders.size
+    fun count(): Int = transaction {
+        OrdersTable.selectAll().count().toInt()
+    }
 
     /** Orders checked out in [from, to) for [storeId] - e.g. for a shift's cash reconciliation window. */
-    fun listOrders(storeId: String, from: Instant, to: Instant): List<Order> =
-        orders.values.filter { it.storeId == storeId && !it.checkedOutAt.isBefore(from) && it.checkedOutAt.isBefore(to) }
+    fun listOrders(storeId: String, from: Instant, to: Instant): List<Order> = transaction {
+        OrdersTable.selectAll()
+            .where { (OrdersTable.storeId eq storeId) and (OrdersTable.checkedOutAt greaterEq from) and (OrdersTable.checkedOutAt less to) }
+            .map { rowToOrder(it) }
+    }
 
     /**
      * Accepts one tender toward the order's total. A single call for the full remaining balance
@@ -132,23 +176,18 @@ class OrderService(
     ): ConfirmPaymentResult {
         if (amount <= 0) return ConfirmPaymentResult.InvalidAmount("amount must be positive")
 
-        var outcome: ConfirmPaymentResult = ConfirmPaymentResult.OrderNotFound
-        orders.compute(orderId) { _, existing ->
-            when {
-                existing == null -> {
-                    outcome = ConfirmPaymentResult.OrderNotFound
-                    null
-                }
-                existing.status != OrderStatus.PENDING -> {
-                    outcome = ConfirmPaymentResult.NotPending
-                    existing
-                }
-                roundCents(amount) > existing.remainingBalance -> {
-                    outcome = ConfirmPaymentResult.InvalidAmount(
-                        "amount exceeds remaining balance of ${existing.remainingBalance}"
-                    )
-                    existing
-                }
+        val outcome = transaction {
+            // Locks the order row for the duration of this transaction - the same atomicity
+            // ConcurrentHashMap.compute() used to give, now enforced by the database instead.
+            val existing = OrdersTable.selectAll().where { OrdersTable.id eq orderId }
+                .forUpdate(ForUpdateOption.ForUpdate).singleOrNull()?.let { rowToOrder(it) }
+
+            val result: ConfirmPaymentResult = when {
+                existing == null -> ConfirmPaymentResult.OrderNotFound
+                existing.status != OrderStatus.PENDING -> ConfirmPaymentResult.NotPending
+                roundCents(amount) > existing.remainingBalance -> ConfirmPaymentResult.InvalidAmount(
+                    "amount exceeds remaining balance of ${existing.remainingBalance}"
+                )
                 else -> {
                     val payment = PaymentRecord(
                         method = method,
@@ -164,19 +203,21 @@ class OrderService(
                     } else {
                         withPayment
                     }
-                    outcome = ConfirmPaymentResult.Success(updated)
-                    updated
+                    persistOrderUpdate(updated)
+                    ConfirmPaymentResult.Success(updated)
                 }
             }
-        }
-        val success = outcome as? ConfirmPaymentResult.Success
-        if (success != null) {
-            recordEvent(orderId, OrderEventType.PAYMENT_CONFIRMED, actorId, "method=$method amount=$amount")
-            // Only a fully-settled order counts as "payment succeeded" for integrations - a partial/
-            // split tender is still an in-progress sale, not a completed one.
-            if (success.order.status == OrderStatus.PAID) {
-                eventListener?.onEvent(success.order, OrderEventType.PAYMENT_CONFIRMED)
+            if (result is ConfirmPaymentResult.Success) {
+                recordEvent(orderId, OrderEventType.PAYMENT_CONFIRMED, actorId, "method=$method amount=$amount")
             }
+            result
+        }
+
+        val success = outcome as? ConfirmPaymentResult.Success
+        // Only a fully-settled order counts as "payment succeeded" for integrations - a partial/
+        // split tender is still an in-progress sale, not a completed one.
+        if (success != null && success.order.status == OrderStatus.PAID) {
+            eventListener?.onEvent(success.order, OrderEventType.PAYMENT_CONFIRMED)
         }
         return outcome
     }
@@ -190,7 +231,7 @@ class OrderService(
      * it.
      */
     fun previewRefund(orderId: String, lineItems: List<RefundLineItemInput>): RefundPreviewResult =
-        when (val validation = validateRefund(orders[orderId], lineItems)) {
+        when (val validation = validateRefund(getOrder(orderId), lineItems)) {
             is RefundValidation.Valid -> RefundPreviewResult.Success(validation.amount, validation.lineItems)
             RefundValidation.OrderNotFound -> RefundPreviewResult.OrderNotFound
             RefundValidation.NotRefundable -> RefundPreviewResult.NotRefundable
@@ -214,17 +255,13 @@ class OrderService(
         reason: String?,
         actorId: String?
     ): RefundResult {
-        var outcome: RefundResult = RefundResult.OrderNotFound
-        orders.compute(orderId) { _, existing ->
-            when {
-                existing == null -> {
-                    outcome = RefundResult.OrderNotFound
-                    null
-                }
-                existing.refunds.any { it.refundId == refundId } -> {
-                    outcome = RefundResult.Success(existing, replayed = true)
-                    existing
-                }
+        val outcome = transaction {
+            val existing = OrdersTable.selectAll().where { OrdersTable.id eq orderId }
+                .forUpdate(ForUpdateOption.ForUpdate).singleOrNull()?.let { rowToOrder(it) }
+
+            val result: RefundResult = when {
+                existing == null -> RefundResult.OrderNotFound
+                existing.refunds.any { it.refundId == refundId } -> RefundResult.Success(existing, replayed = true)
                 else -> when (val validation = validateRefund(existing, lineItems)) {
                     is RefundValidation.Valid -> {
                         val refund = RefundRecord(
@@ -242,37 +279,30 @@ class OrderService(
                         } else {
                             withRefund.copy(status = OrderStatus.PARTIALLY_REFUNDED)
                         }
-                        outcome = RefundResult.Success(updated, replayed = false)
-                        updated
+                        persistOrderUpdate(updated)
+                        RefundResult.Success(updated, replayed = false)
                     }
-                    RefundValidation.OrderNotFound -> {
-                        outcome = RefundResult.OrderNotFound
-                        existing
-                    }
-                    RefundValidation.NotRefundable -> {
-                        outcome = RefundResult.NotRefundable
-                        existing
-                    }
-                    RefundValidation.RefundWindowExpired -> {
-                        outcome = RefundResult.RefundWindowExpired
-                        existing
-                    }
-                    is RefundValidation.InvalidLineItem -> {
-                        outcome = RefundResult.InvalidLineItem(validation.message)
-                        existing
-                    }
+                    RefundValidation.OrderNotFound -> RefundResult.OrderNotFound
+                    RefundValidation.NotRefundable -> RefundResult.NotRefundable
+                    RefundValidation.RefundWindowExpired -> RefundResult.RefundWindowExpired
+                    is RefundValidation.InvalidLineItem -> RefundResult.InvalidLineItem(validation.message)
                 }
             }
-        }
-        val success = outcome as? RefundResult.Success
-        if (success != null && !success.replayed) {
-            val justRefunded = success.order.refunds.last()
-            recordEvent(orderId, OrderEventType.REFUNDED, actorId, "method=$method amount=${justRefunded.amount}")
+            val success = result as? RefundResult.Success
+            if (success != null && !success.replayed) {
+                val justRefunded = success.order.refunds.last()
+                recordEvent(orderId, OrderEventType.REFUNDED, actorId, "method=$method amount=${justRefunded.amount}")
+            }
+            result
         }
         return outcome
     }
 
-    fun listEvents(orderId: String): List<OrderEvent> = synchronized(events) { events.filter { it.orderId == orderId } }
+    fun listEvents(orderId: String): List<OrderEvent> = transaction {
+        OrderEventsTable.selectAll().where { OrderEventsTable.orderId eq orderId }
+            .orderBy(OrderEventsTable.id to SortOrder.ASC)
+            .map { rowToOrderEvent(it) }
+    }
 
     private fun validateRefund(order: Order?, lineItems: List<RefundLineItemInput>): RefundValidation {
         if (order == null) return RefundValidation.OrderNotFound
@@ -322,9 +352,38 @@ class OrderService(
         return RefundValidation.Valid(resolvedLines, total)
     }
 
+    private fun persistNewOrder(order: Order) {
+        OrdersTable.insert {
+            it[id] = order.id
+            it[cartId] = order.cartId
+            it[storeId] = order.storeId
+            it[createdBy] = order.createdBy
+            it[items] = order.items
+            it[discount] = order.discount
+            it[totals] = order.totals
+            it[idempotencyKey] = order.idempotencyKey
+            it[checkedOutAt] = order.checkedOutAt
+            it[status] = order.status.name
+            it[payments] = order.payments
+            it[refunds] = order.refunds
+        }
+    }
+
+    private fun persistOrderUpdate(order: Order) {
+        OrdersTable.update({ OrdersTable.id eq order.id }) {
+            it[status] = order.status.name
+            it[payments] = order.payments
+            it[refunds] = order.refunds
+        }
+    }
+
     private fun recordEvent(orderId: String, type: OrderEventType, actorId: String?, detail: String?) {
-        synchronized(events) {
-            events += OrderEvent(nowProvider(), orderId, type, actorId, detail)
+        OrderEventsTable.insert {
+            it[OrderEventsTable.orderId] = orderId
+            it[timestamp] = nowProvider()
+            it[OrderEventsTable.type] = type.name
+            it[OrderEventsTable.actorId] = actorId
+            it[OrderEventsTable.detail] = detail
         }
     }
 }

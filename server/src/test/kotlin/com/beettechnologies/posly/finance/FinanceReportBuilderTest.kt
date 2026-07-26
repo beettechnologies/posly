@@ -1,5 +1,7 @@
 package com.beettechnologies.posly.finance
 
+import com.beettechnologies.posly.TestDatabase
+
 import com.beettechnologies.posly.cart.Cart
 import com.beettechnologies.posly.cart.CartItem
 import com.beettechnologies.posly.cart.CartTotals
@@ -12,11 +14,17 @@ import org.apache.commons.csv.CSVFormat
 import org.apache.commons.csv.CSVParser
 import java.io.StringReader
 import java.time.Instant
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class FinanceReportBuilderTest {
+
+    @BeforeTest
+    fun resetDb() {
+        TestDatabase.reset()
+    }
 
     private fun seedOrder(
         orders: OrderService,

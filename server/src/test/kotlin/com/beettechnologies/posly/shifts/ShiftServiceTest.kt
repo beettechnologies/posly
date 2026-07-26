@@ -1,5 +1,7 @@
 package com.beettechnologies.posly.shifts
 
+import com.beettechnologies.posly.TestDatabase
+
 import com.beettechnologies.posly.cart.Cart
 import com.beettechnologies.posly.cart.CartItem
 import com.beettechnologies.posly.cart.CartTotals
@@ -11,6 +13,7 @@ import com.beettechnologies.posly.stores.CreateStoreResult
 import com.beettechnologies.posly.stores.StoreService
 import com.beettechnologies.posly.stores.TaxProfileService
 import java.time.Instant
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -18,6 +21,11 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class ShiftServiceTest {
+
+    @BeforeTest
+    fun resetDb() {
+        TestDatabase.reset()
+    }
 
     /** A settable "now" so a test can open a shift, seed sales, advance the clock, then close it. */
     private class TestClock(var instant: Instant)

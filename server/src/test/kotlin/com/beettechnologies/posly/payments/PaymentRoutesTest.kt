@@ -1,5 +1,8 @@
 package com.beettechnologies.posly.payments
 
+import com.beettechnologies.posly.TestDatabase
+import com.beettechnologies.posly.TestDatabaseConfig
+
 import com.beettechnologies.posly.module
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
@@ -37,8 +40,10 @@ private fun sign(body: String): String {
 class PaymentRoutesTest {
 
     private fun ApplicationTestBuilder.configureApp() {
+        TestDatabase.reset()
         environment {
             config = MapApplicationConfig(
+                *TestDatabaseConfig.entries,
                 "jwt.secret" to "test-secret-at-least-32-characters-long!!",
                 "jwt.issuer" to "posly",
                 "jwt.audience" to "posly-api",

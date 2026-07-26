@@ -1,11 +1,19 @@
 package com.beettechnologies.posly.products
 
+import com.beettechnologies.posly.TestDatabase
+
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 
 class ProductServiceTest {
+
+    @BeforeTest
+    fun resetDb() {
+        TestDatabase.reset()
+    }
 
     @Test
     fun `getProductBySku finds a product by its sku`() {

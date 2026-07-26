@@ -1,15 +1,19 @@
 package com.beettechnologies.posly.cart
 
+import com.beettechnologies.posly.db.InstantSerializer
 import com.beettechnologies.posly.products.TaxCategory
+import kotlinx.serialization.Serializable
 import java.time.Instant
 import java.util.UUID
 import kotlin.math.round
 
 enum class CartStatus { OPEN, CHECKED_OUT }
 
+@Serializable
 enum class DiscountType { PERCENTAGE, FIXED_AMOUNT }
 
 /** [value] is a percent (0-100) for PERCENTAGE, or an absolute currency amount for FIXED_AMOUNT. */
+@Serializable
 data class Discount(
     val type: DiscountType,
     val value: Double
@@ -21,6 +25,7 @@ data class Discount(
     }
 }
 
+@Serializable
 data class SelectedModifier(
     val modifierId: String,
     val option: String,
@@ -30,6 +35,7 @@ data class SelectedModifier(
 /** A caller-requested modifier selection, before its additionalCost is resolved from the product's catalog entry. */
 data class ModifierSelection(val modifierId: String, val option: String)
 
+@Serializable
 data class CartItem(
     val id: String = UUID.randomUUID().toString(),
     val productId: String,
@@ -61,8 +67,10 @@ data class Cart(
 
 internal val TAXABLE_CATEGORIES = setOf(TaxCategory.STANDARD, TaxCategory.REDUCED)
 
+@Serializable
 data class TaxBreakdownLine(val name: String, val ratePercent: Double, val amount: Double)
 
+@Serializable
 data class CartTotals(
     val subtotal: Double,
     val itemDiscountTotal: Double,
@@ -107,16 +115,18 @@ fun computeTotals(cart: Cart, calculateTax: (Double) -> Pair<List<TaxBreakdownLi
 
 enum class OrderStatus { PENDING, PAID, PARTIALLY_REFUNDED, REFUNDED }
 
+@Serializable
 data class PaymentRecord(
     val method: String,
     val amount: Double,
     val reference: String?,
     val confirmedBy: String?,
-    val confirmedAt: Instant,
+    @Serializable(with = InstantSerializer::class) val confirmedAt: Instant,
     val maskedCardNumber: String? = null
 )
 
 /** One refunded cart line within a [RefundRecord] - [amount] already includes this line's fair share of order tax. */
+@Serializable
 data class RefundLineItem(
     val cartItemId: String,
     val quantity: Int,
@@ -124,6 +134,7 @@ data class RefundLineItem(
     val restock: Boolean
 )
 
+@Serializable
 data class RefundRecord(
     val refundId: String,
     /** "CARD" (via the payment gateway) or "MANUAL" (cashier/manager asserting they handled it outside the system). */
@@ -132,7 +143,7 @@ data class RefundRecord(
     val amount: Double,
     val reason: String?,
     val refundedBy: String?,
-    val refundedAt: Instant
+    @Serializable(with = InstantSerializer::class) val refundedAt: Instant
 )
 
 data class Order(

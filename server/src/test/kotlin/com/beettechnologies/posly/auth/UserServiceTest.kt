@@ -1,7 +1,10 @@
 package com.beettechnologies.posly.auth
 
+import com.beettechnologies.posly.TestDatabase
+
 import com.beettechnologies.posly.model.Role
 import com.beettechnologies.posly.model.UserStatus
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -11,6 +14,11 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class UserServiceTest {
+
+    @BeforeTest
+    fun resetDb() {
+        TestDatabase.reset()
+    }
 
     @Test
     fun `seeded admin manager cashier accounts exist with expected roles`() {

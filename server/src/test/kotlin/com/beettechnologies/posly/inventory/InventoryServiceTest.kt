@@ -1,5 +1,7 @@
 package com.beettechnologies.posly.inventory
 
+import com.beettechnologies.posly.TestDatabase
+
 import com.beettechnologies.posly.products.CreateProductRequest
 import com.beettechnologies.posly.products.ProductResult
 import com.beettechnologies.posly.products.ProductService
@@ -11,12 +13,18 @@ import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 class InventoryServiceTest {
+
+    @BeforeTest
+    fun resetDb() {
+        TestDatabase.reset()
+    }
 
     private fun newHarness(): Triple<ProductService, StoreService, InventoryService> {
         val productService = ProductService()

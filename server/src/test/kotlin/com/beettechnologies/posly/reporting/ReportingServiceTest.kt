@@ -1,5 +1,7 @@
 package com.beettechnologies.posly.reporting
 
+import com.beettechnologies.posly.TestDatabase
+
 import com.beettechnologies.posly.cart.Cart
 import com.beettechnologies.posly.cart.CartItem
 import com.beettechnologies.posly.cart.CartTotals
@@ -22,6 +24,7 @@ import com.beettechnologies.posly.stores.CreateStoreResult
 import com.beettechnologies.posly.stores.StoreService
 import com.beettechnologies.posly.stores.TaxProfileService
 import java.time.Instant
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -29,6 +32,11 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class ReportingServiceTest {
+
+    @BeforeTest
+    fun resetDb() {
+        TestDatabase.reset()
+    }
 
     /** A settable "now" so period-boundary math is exercised deterministically. */
     private class TestClock(var instant: Instant)

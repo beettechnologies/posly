@@ -1,5 +1,7 @@
 package com.beettechnologies.posly.sync
 
+import com.beettechnologies.posly.TestDatabase
+
 import com.beettechnologies.posly.cart.CartService
 import com.beettechnologies.posly.cart.OrderService
 import com.beettechnologies.posly.cart.OrderStatus
@@ -15,6 +17,7 @@ import com.beettechnologies.posly.stores.StoreService
 import com.beettechnologies.posly.stores.TaxProfileService
 import com.beettechnologies.posly.stores.TaxRate
 import java.time.Instant
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -87,6 +90,11 @@ private class Harness {
 }
 
 class OfflineSyncServiceTest {
+
+    @BeforeTest
+    fun resetDb() {
+        TestDatabase.reset()
+    }
 
     @Test
     fun `a sale whose item matches the current catalog is created and paid`() {

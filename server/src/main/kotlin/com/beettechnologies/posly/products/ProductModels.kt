@@ -1,11 +1,14 @@
 package com.beettechnologies.posly.products
 
+import kotlinx.serialization.Serializable
 import java.util.UUID
 
+@Serializable
 enum class TaxCategory {
     STANDARD, REDUCED, ZERO, EXEMPT
 }
 
+@Serializable
 data class ProductModifier(
     val id: String = UUID.randomUUID().toString(),
     val name: String,

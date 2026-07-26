@@ -1,5 +1,7 @@
 package com.beettechnologies.posly.inventory
 
+import com.beettechnologies.posly.TestDatabase
+
 import com.beettechnologies.posly.products.CreateProductRequest
 import com.beettechnologies.posly.products.ProductResult
 import com.beettechnologies.posly.products.ProductService
@@ -7,6 +9,7 @@ import com.beettechnologies.posly.stores.Address
 import com.beettechnologies.posly.stores.CreateStoreResult
 import com.beettechnologies.posly.stores.StoreService
 import com.beettechnologies.posly.stores.TaxProfileService
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -14,6 +17,11 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class StockCountServiceTest {
+
+    @BeforeTest
+    fun resetDb() {
+        TestDatabase.reset()
+    }
 
     private data class Harness(
         val products: ProductService,
