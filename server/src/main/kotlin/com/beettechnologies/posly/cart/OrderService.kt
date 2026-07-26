@@ -80,6 +80,10 @@ class OrderService(
 
     fun count(): Int = orders.size
 
+    /** Orders checked out in [from, to) for [storeId] - e.g. for a shift's cash reconciliation window. */
+    fun listOrders(storeId: String, from: Instant, to: Instant): List<Order> =
+        orders.values.filter { it.storeId == storeId && !it.checkedOutAt.isBefore(from) && it.checkedOutAt.isBefore(to) }
+
     /**
      * Accepts one tender toward the order's total. A single call for the full remaining balance
      * behaves exactly as before (PENDING -> PAID). A lesser amount is a partial/split tender: the

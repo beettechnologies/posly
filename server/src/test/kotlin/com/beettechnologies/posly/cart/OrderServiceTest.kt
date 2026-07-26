@@ -348,4 +348,24 @@ class OrderServiceTest {
         assertNull(service.getOrder(order.id))
         assertTrue(service.listEvents(order.id).isEmpty())
     }
+
+    @Test
+    fun `listOrders returns only orders for the given store checked out within the window`() {
+        val service = OrderService()
+        val windowStart = Instant.parse("2026-01-01T09:00:00Z")
+        val windowEnd = Instant.parse("2026-01-01T17:00:00Z")
+
+        val beforeWindow = service.createOrder(seedCart(), seedTotals(), "key-before", checkedOutAt = windowStart.minusSeconds(1))
+        val atStart = service.createOrder(seedCart(), seedTotals(), "key-at-start", checkedOutAt = windowStart)
+        val inWindow = service.createOrder(seedCart(), seedTotals(), "key-in-window", checkedOutAt = windowStart.plusSeconds(3600))
+        val atEnd = service.createOrder(seedCart(), seedTotals(), "key-at-end", checkedOutAt = windowEnd)
+        val otherStore = service.createOrder(seedCart(storeId = "store-2"), seedTotals(), "key-other-store", checkedOutAt = windowStart.plusSeconds(10))
+
+        val result = service.listOrders("store-1", windowStart, windowEnd)
+
+        assertEquals(setOf(atStart.id, inWindow.id), result.map { it.id }.toSet())
+        assertTrue(beforeWindow.id !in result.map { it.id }, "an order checked out before the window must be excluded")
+        assertTrue(atEnd.id !in result.map { it.id }, "the window's end is exclusive")
+        assertTrue(otherStore.id !in result.map { it.id }, "orders from a different store must be excluded")
+    }
 }

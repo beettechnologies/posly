@@ -26,6 +26,7 @@ import com.beettechnologies.posly.devices.DevicePairingAdminScreen
 import com.beettechnologies.posly.devices.PairingScreen
 import com.beettechnologies.posly.pos.RefundScreen
 import com.beettechnologies.posly.pos.SaleScreen
+import com.beettechnologies.posly.pos.ShiftScreen
 import org.koin.compose.koinInject
 
 private const val ROUTE_PAIRING = "pairing"
@@ -42,6 +43,7 @@ private const val ROUTE_DEVICE_PAIRING_ADMIN = "devicePairingAdmin"
 private const val ROUTE_DEVICE_LIST = "deviceList"
 private const val ROUTE_SALE = "sale"
 private const val ROUTE_REFUNDS = "refunds"
+private const val ROUTE_SHIFT = "shift"
 
 /**
  * Single navigation surface for the auth flow, driven reactively by
@@ -119,7 +121,8 @@ fun AuthNavHost(
                 onManageTaxProfiles = { navController.navigate(ROUTE_TAX_PROFILES) },
                 onPairDevice = { navController.navigate(ROUTE_DEVICE_PAIRING_ADMIN) },
                 onManageDevices = { navController.navigate(ROUTE_DEVICE_LIST) },
-                onManageRefunds = { navController.navigate(ROUTE_REFUNDS) }
+                onManageRefunds = { navController.navigate(ROUTE_REFUNDS) },
+                onManageShift = { navController.navigate(ROUTE_SHIFT) }
             )
         }
         composable(ROUTE_SALE) {
@@ -133,6 +136,9 @@ fun AuthNavHost(
         }
         composable(ROUTE_REFUNDS) {
             RefundScreen(onBack = { navController.popBackStack() })
+        }
+        composable(ROUTE_SHIFT) {
+            ShiftScreen(onBack = { navController.popBackStack() })
         }
 
         composable(ROUTE_STORES) {

@@ -29,6 +29,7 @@ fun DashboardScreen(
     onPairDevice: () -> Unit,
     onManageDevices: () -> Unit,
     onManageRefunds: () -> Unit,
+    onManageShift: () -> Unit,
     authRepository: AuthRepository = koinInject()
 ) {
     val scope = rememberCoroutineScope()
@@ -60,8 +61,11 @@ fun DashboardScreen(
         Button(onClick = onManageDevices, modifier = Modifier.padding(bottom = 12.dp)) {
             Text("Manage Devices")
         }
-        Button(onClick = onManageRefunds, modifier = Modifier.padding(bottom = 24.dp)) {
+        Button(onClick = onManageRefunds, modifier = Modifier.padding(bottom = 12.dp)) {
             Text("Refunds & Returns")
+        }
+        Button(onClick = onManageShift, modifier = Modifier.padding(bottom = 24.dp)) {
+            Text("Shift")
         }
         Button(onClick = { scope.launch { authRepository.logout() } }) {
             Text("Log out")

@@ -10,6 +10,7 @@ import com.beettechnologies.posly.orders.ordersModule
 import com.beettechnologies.posly.payments.paymentsModule
 import com.beettechnologies.posly.products.productsModule
 import com.beettechnologies.posly.receipts.receiptsModule
+import com.beettechnologies.posly.shifts.shiftsModule
 import com.beettechnologies.posly.stores.storesModule
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.context.startKoin
@@ -29,7 +30,8 @@ class PoslyApplication : Application() {
                 cartModule,
                 ordersModule,
                 paymentsModule,
-                receiptsModule
+                receiptsModule,
+                shiftsModule
             )
         }
     }

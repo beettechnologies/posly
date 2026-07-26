@@ -31,6 +31,8 @@ import com.beettechnologies.posly.printing.configurePrintRoutes
 import com.beettechnologies.posly.products.ProductService
 import com.beettechnologies.posly.products.configureProductRoutes
 import com.beettechnologies.posly.products.search.configureSearchRoutes
+import com.beettechnologies.posly.shifts.ShiftService
+import com.beettechnologies.posly.shifts.configureShiftRoutes
 import com.beettechnologies.posly.stores.StoreService
 import com.beettechnologies.posly.stores.TaxProfileService
 import com.beettechnologies.posly.stores.configureStoreRoutes
@@ -72,6 +74,7 @@ fun Application.module() {
     val inventoryService = InventoryService(productService, storeService)
     val stockCountService = StockCountService(inventoryService, productService, storeService)
     val orderService = OrderService()
+    val shiftService = ShiftService(storeService, orderService)
     val cartService = CartService(productService, storeService, taxProfileService, orderService)
     val webhookSecret = environment.config.config("payments").property("webhookSecret").getString()
     val paymentGatewayService = PaymentGatewayService(
@@ -134,6 +137,7 @@ fun Application.module() {
     configureTaxRoutes(taxProfileService)
     configureInventoryRoutes(inventoryService)
     configureStockCountRoutes(stockCountService)
+    configureShiftRoutes(shiftService)
     configureCartRoutes(cartService)
     configureOrderRoutes(orderService, paymentGatewayService, inventoryService)
     configurePaymentRoutes(paymentGatewayService)
