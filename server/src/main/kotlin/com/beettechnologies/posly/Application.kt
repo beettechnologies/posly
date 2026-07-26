@@ -21,6 +21,8 @@ import com.beettechnologies.posly.devices.configureDeviceRoutes
 import com.beettechnologies.posly.email.EmailService
 import com.beettechnologies.posly.email.SimulatorEmailGateway
 import com.beettechnologies.posly.email.configureEmailRoutes
+import com.beettechnologies.posly.finance.FinanceReportService
+import com.beettechnologies.posly.finance.configureFinanceReportRoutes
 import com.beettechnologies.posly.inventory.InventoryService
 import com.beettechnologies.posly.inventory.StockCountService
 import com.beettechnologies.posly.inventory.configureInventoryRoutes
@@ -111,7 +113,12 @@ fun Application.module() {
     val productImportService = ProductImportService(productService, importScope = this)
     val printerRegistryService = PrinterRegistryService()
     val printService = PrintService(orderService, printerRegistryService, SimulatorPrintGateway())
-    val emailService = EmailService(orderService, SimulatorEmailGateway())
+    val emailGateway = SimulatorEmailGateway()
+    val emailService = EmailService(orderService, emailGateway)
+    val financeReportService = FinanceReportService(
+        orderService, shiftService, storeService, emailGateway,
+        scheduleScope = this
+    )
 
     install(ContentNegotiation) {
         json(Json { ignoreUnknownKeys = true })
@@ -180,4 +187,5 @@ fun Application.module() {
     configurePrintRoutes(printerRegistryService, printService)
     configureEmailRoutes(emailService)
     configureReportingRoutes(reportingService)
+    configureFinanceReportRoutes(financeReportService)
 }

@@ -7,6 +7,7 @@ import com.beettechnologies.posly.auth.sharedUiModule
 import com.beettechnologies.posly.cart.cartModule
 import com.beettechnologies.posly.catalog.importModule
 import com.beettechnologies.posly.devices.devicesModule
+import com.beettechnologies.posly.finance.financeReportModule
 import com.beettechnologies.posly.orders.ordersModule
 import com.beettechnologies.posly.payments.paymentsModule
 import com.beettechnologies.posly.products.productsModule
@@ -37,7 +38,8 @@ class PoslyApplication : Application() {
                 shiftsModule,
                 usersModule,
                 importModule,
-                reportingModule
+                reportingModule,
+                financeReportModule
             )
         }
     }

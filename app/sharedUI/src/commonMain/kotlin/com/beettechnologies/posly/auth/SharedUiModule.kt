@@ -1,5 +1,6 @@
 package com.beettechnologies.posly.auth
 
+import com.beettechnologies.posly.admin.FinanceReportsViewModel
 import com.beettechnologies.posly.admin.ImportWizardViewModel
 import com.beettechnologies.posly.admin.SsoConfigViewModel
 import com.beettechnologies.posly.admin.StoreFormViewModel
@@ -46,4 +47,5 @@ val sharedUiModule: Module = module {
     viewModel { ImportWizardViewModel(get()) }
     viewModel { ManagerDashboardViewModel(get(), get()) }
     viewModel { TransactionListViewModel(get()) }
+    viewModel { FinanceReportsViewModel(get(), get()) }
 }

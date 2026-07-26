@@ -16,6 +16,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.savedstate.read
+import com.beettechnologies.posly.admin.FinanceReportsScreen
 import com.beettechnologies.posly.admin.ImportWizardScreen
 import com.beettechnologies.posly.admin.SsoConfigScreen
 import com.beettechnologies.posly.admin.StoreFormScreen
@@ -57,6 +58,7 @@ private const val ROUTE_USER_FORM_EDIT = "userForm/{id}"
 private const val ROUTE_SSO_CONFIG = "ssoConfig"
 private const val ROUTE_IMPORT_PRODUCTS = "importProducts"
 private const val ROUTE_MANAGER_DASHBOARD = "managerDashboard"
+private const val ROUTE_FINANCE_REPORTS = "financeReports"
 private const val ROUTE_TRANSACTION_LIST = "transactionList"
 
 private data class TransactionListArgs(
@@ -159,7 +161,8 @@ fun AuthNavHost(
                 onManageShift = { navController.navigate(ROUTE_SHIFT) },
                 onManageUsers = { navController.navigate(ROUTE_USERS) },
                 onImportProducts = { navController.navigate(ROUTE_IMPORT_PRODUCTS) },
-                onManageDashboard = { navController.navigate(ROUTE_MANAGER_DASHBOARD) }
+                onManageDashboard = { navController.navigate(ROUTE_MANAGER_DASHBOARD) },
+                onFinanceReports = { navController.navigate(ROUTE_FINANCE_REPORTS) }
             )
         }
         composable(ROUTE_SALE) {
@@ -258,6 +261,9 @@ fun AuthNavHost(
                     navController.navigate(ROUTE_TRANSACTION_LIST)
                 }
             )
+        }
+        composable(ROUTE_FINANCE_REPORTS) {
+            FinanceReportsScreen(onBack = { navController.popBackStack() })
         }
         composable(ROUTE_TRANSACTION_LIST) {
             val args = pendingTransactionListArgs
