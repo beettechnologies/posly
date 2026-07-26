@@ -16,6 +16,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.savedstate.read
+import com.beettechnologies.posly.admin.ImportWizardScreen
 import com.beettechnologies.posly.admin.SsoConfigScreen
 import com.beettechnologies.posly.admin.StoreFormScreen
 import com.beettechnologies.posly.admin.StoreListScreen
@@ -52,6 +53,7 @@ private const val ROUTE_USERS = "users"
 private const val ROUTE_USER_FORM = "userForm"
 private const val ROUTE_USER_FORM_EDIT = "userForm/{id}"
 private const val ROUTE_SSO_CONFIG = "ssoConfig"
+private const val ROUTE_IMPORT_PRODUCTS = "importProducts"
 
 /**
  * Single navigation surface for the auth flow, driven reactively by
@@ -142,7 +144,8 @@ fun AuthNavHost(
                 onManageDevices = { navController.navigate(ROUTE_DEVICE_LIST) },
                 onManageRefunds = { navController.navigate(ROUTE_REFUNDS) },
                 onManageShift = { navController.navigate(ROUTE_SHIFT) },
-                onManageUsers = { navController.navigate(ROUTE_USERS) }
+                onManageUsers = { navController.navigate(ROUTE_USERS) },
+                onImportProducts = { navController.navigate(ROUTE_IMPORT_PRODUCTS) }
             )
         }
         composable(ROUTE_SALE) {
@@ -229,6 +232,9 @@ fun AuthNavHost(
         }
         composable(ROUTE_SSO_CONFIG) {
             SsoConfigScreen(onBack = { navController.popBackStack() })
+        }
+        composable(ROUTE_IMPORT_PRODUCTS) {
+            ImportWizardScreen(onBack = { navController.popBackStack() })
         }
     }
 }

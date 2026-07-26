@@ -12,6 +12,7 @@ androidx-lifecycle = "2.11.0-beta01"
 androidx-navigation = "2.9.2"
 androidx-security-crypto = "1.1.0"
 androidx-testExt = "1.3.0"
+commons-csv = "1.14.1"
 composeMultiplatform = "1.11.1"
 java-jwt = "4.4.0"
 jbcrypt = "0.4"
@@ -98,6 +99,7 @@ androidx-camera-lifecycle = { module = "androidx.camera:camera-lifecycle", versi
 androidx-camera-view = { module = "androidx.camera:camera-view", version.ref = "androidx-camera" }
 mlkit-barcodeScanning = { module = "com.google.mlkit:barcode-scanning", version.ref = "mlkit-barcodeScanning" }
 pdfbox = { module = "org.apache.pdfbox:pdfbox", version.ref = "pdfbox" }
+commons-csv = { module = "org.apache.commons:commons-csv", version.ref = "commons-csv" }
 
 [plugins]
 androidApplication = { id = "com.android.application", version.ref = "agp" }

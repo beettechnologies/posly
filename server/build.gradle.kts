@@ -31,6 +31,7 @@ dependencies {
     implementation(libs.lucene.core)
     implementation(libs.lucene.analysis.common)
     implementation(libs.pdfbox)
+    implementation(libs.commons.csv)
     implementation(libs.ktor.clientCore)
     implementation(libs.ktor.clientCio)
     implementation(libs.ktor.clientContentNegotiationMultiplatform)

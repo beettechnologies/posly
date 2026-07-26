@@ -94,6 +94,24 @@ class ProductService {
         return ProductResult.Updated(updated)
     }
 
+    /**
+     * Full replacement used only for import rollback - unlike [updateProduct], every field of
+     * [snapshot] is applied verbatim, including nulls. [updateProduct]'s partial-update semantics
+     * (`null` means "leave unchanged") can't express "clear this field back to null," which a
+     * rollback sometimes needs to do.
+     */
+    fun restoreProduct(snapshot: Product): ProductResult {
+        val existing = products[snapshot.id] ?: return ProductResult.NotFound
+        if (existing.sku != snapshot.sku) {
+            skuIndex.remove(existing.sku)
+            skuIndex[snapshot.sku] = snapshot.id
+        }
+        val restored = snapshot.copy(updatedAt = System.currentTimeMillis())
+        products[snapshot.id] = restored
+        reindex(restored)
+        return ProductResult.Updated(restored)
+    }
+
     fun deleteProduct(id: String): Boolean {
         val product = products.remove(id) ?: return false
         skuIndex.remove(product.sku)

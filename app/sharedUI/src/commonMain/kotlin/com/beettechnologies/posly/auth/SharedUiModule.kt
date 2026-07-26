@@ -1,5 +1,6 @@
 package com.beettechnologies.posly.auth
 
+import com.beettechnologies.posly.admin.ImportWizardViewModel
 import com.beettechnologies.posly.admin.SsoConfigViewModel
 import com.beettechnologies.posly.admin.StoreFormViewModel
 import com.beettechnologies.posly.admin.StoreListViewModel
@@ -40,4 +41,5 @@ val sharedUiModule: Module = module {
     viewModel { UserFormViewModel(get(), get()) }
     viewModel { SsoConfigViewModel(get()) }
     viewModel { AcceptInviteViewModel(get()) }
+    viewModel { ImportWizardViewModel(get()) }
 }

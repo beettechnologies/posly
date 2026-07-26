@@ -13,6 +13,8 @@ import com.beettechnologies.posly.cart.CartService
 import com.beettechnologies.posly.cart.OrderService
 import com.beettechnologies.posly.cart.configureCartRoutes
 import com.beettechnologies.posly.cart.configureOrderRoutes
+import com.beettechnologies.posly.catalog.ProductImportService
+import com.beettechnologies.posly.catalog.configureProductImportRoutes
 import com.beettechnologies.posly.devices.DeviceRegistryService
 import com.beettechnologies.posly.devices.configureDeviceRoutes
 import com.beettechnologies.posly.email.EmailService
@@ -94,6 +96,7 @@ fun Application.module() {
         autoResolveScope = this
     )
     val offlineSyncService = OfflineSyncService(deviceRegistryService, productService, cartService, orderService)
+    val productImportService = ProductImportService(productService, importScope = this)
     val printerRegistryService = PrinterRegistryService()
     val printService = PrintService(orderService, printerRegistryService, SimulatorPrintGateway())
     val emailService = EmailService(orderService, SimulatorEmailGateway())
@@ -151,6 +154,7 @@ fun Application.module() {
     configureUserRoutes(authService, userService, ssoConfigService)
     configureDeviceRoutes(deviceRegistryService)
     configureProductRoutes(productService)
+    configureProductImportRoutes(productImportService)
     configureSearchRoutes(productService)
     configureStoreRoutes(storeService)
     configureTaxProfileRoutes(taxProfileService)
