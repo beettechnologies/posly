@@ -17,7 +17,9 @@ import com.beettechnologies.posly.email.EmailService
 import com.beettechnologies.posly.email.SimulatorEmailGateway
 import com.beettechnologies.posly.email.configureEmailRoutes
 import com.beettechnologies.posly.inventory.InventoryService
+import com.beettechnologies.posly.inventory.StockCountService
 import com.beettechnologies.posly.inventory.configureInventoryRoutes
+import com.beettechnologies.posly.inventory.configureStockCountRoutes
 import com.beettechnologies.posly.observability.configureObservability
 import com.beettechnologies.posly.payments.PaymentGatewayService
 import com.beettechnologies.posly.payments.SimulatorPaymentGateway
@@ -68,6 +70,7 @@ fun Application.module() {
     val taxProfileService = TaxProfileService()
     val storeService = StoreService(taxProfileService)
     val inventoryService = InventoryService(productService, storeService)
+    val stockCountService = StockCountService(inventoryService, productService, storeService)
     val orderService = OrderService()
     val cartService = CartService(productService, storeService, taxProfileService, orderService)
     val webhookSecret = environment.config.config("payments").property("webhookSecret").getString()
@@ -130,6 +133,7 @@ fun Application.module() {
     configureTaxProfileRoutes(taxProfileService)
     configureTaxRoutes(taxProfileService)
     configureInventoryRoutes(inventoryService)
+    configureStockCountRoutes(stockCountService)
     configureCartRoutes(cartService)
     configureOrderRoutes(orderService, paymentGatewayService, inventoryService)
     configurePaymentRoutes(paymentGatewayService)

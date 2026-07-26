@@ -177,6 +177,23 @@ class InventoryServiceTest {
     }
 
     @Test
+    fun `adjustStock returns the id of the transaction it recorded and accepts an optional referenceId`() {
+        val (products, stores, inventory) = newHarness()
+        val productId = seedProduct(products)
+        val storeId = seedStore(stores)
+
+        val result = inventory.adjustStock(
+            productId, storeId, delta = 10, reason = "Stock count reconciliation (count-1)", actorId = "manager-1", referenceId = "count-1"
+        )
+
+        val success = assertIs<AdjustStockResult.Success>(result)
+        val transactions = inventory.listTransactions(storeId, productId)
+        assertEquals(1, transactions.size)
+        assertEquals(success.transactionId, transactions.single().id)
+        assertEquals("count-1", transactions.single().referenceId)
+    }
+
+    @Test
     fun `concurrent reservations never oversell available stock`() {
         val (products, stores, inventory) = newHarness()
         val productId = seedProduct(products)

@@ -8,7 +8,7 @@ import java.util.concurrent.ConcurrentHashMap
 private data class SnapshotKey(val productId: String, val storeId: String)
 
 sealed class AdjustStockResult {
-    data class Success(val snapshot: InventorySnapshot) : AdjustStockResult()
+    data class Success(val snapshot: InventorySnapshot, val transactionId: String) : AdjustStockResult()
     data object ProductNotFound : AdjustStockResult()
     data object StoreNotFound : AdjustStockResult()
     data object WouldGoNegative : AdjustStockResult()
@@ -49,7 +49,14 @@ class InventoryService(
     private val reservations = ConcurrentHashMap<String, Reservation>()
     private val transactions = Collections.synchronizedList(mutableListOf<InventoryTransaction>())
 
-    fun adjustStock(productId: String, storeId: String, delta: Int, reason: String, actorId: String?): AdjustStockResult {
+    fun adjustStock(
+        productId: String,
+        storeId: String,
+        delta: Int,
+        reason: String,
+        actorId: String?,
+        referenceId: String? = null
+    ): AdjustStockResult {
         if (productService.getProduct(productId) == null) return AdjustStockResult.ProductNotFound
         if (storeService.getStore(storeId) == null) return AdjustStockResult.StoreNotFound
 
@@ -59,8 +66,10 @@ class InventoryService(
             if (newOnHand < current.reserved) null else current.copy(onHand = newOnHand)
         } ?: return AdjustStockResult.WouldGoNegative
 
-        recordTransaction(productId, storeId, InventoryTransactionType.ADJUSTMENT, delta, reason = reason, actorId = actorId)
-        return AdjustStockResult.Success(updated)
+        val transaction = recordTransaction(
+            productId, storeId, InventoryTransactionType.ADJUSTMENT, delta, referenceId = referenceId, reason = reason, actorId = actorId
+        )
+        return AdjustStockResult.Success(updated, transaction.id)
     }
 
     fun reserve(productId: String, storeId: String, quantity: Int, referenceId: String): ReserveResult {
@@ -158,18 +167,18 @@ class InventoryService(
         referenceId: String? = null,
         reason: String? = null,
         actorId: String? = null
-    ) {
-        transactions.add(
-            InventoryTransaction(
-                productId = productId,
-                storeId = storeId,
-                type = type,
-                quantity = quantity,
-                referenceId = referenceId,
-                reason = reason,
-                actorId = actorId
-            )
+    ): InventoryTransaction {
+        val transaction = InventoryTransaction(
+            productId = productId,
+            storeId = storeId,
+            type = type,
+            quantity = quantity,
+            referenceId = referenceId,
+            reason = reason,
+            actorId = actorId
         )
+        transactions.add(transaction)
+        return transaction
     }
 
     /**
