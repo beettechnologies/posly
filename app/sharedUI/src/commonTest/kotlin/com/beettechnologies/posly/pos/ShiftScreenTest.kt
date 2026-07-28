@@ -21,6 +21,7 @@ import com.beettechnologies.posly.stores.StoreListResult
 import com.beettechnologies.posly.stores.StoreResponse
 import com.beettechnologies.posly.stores.StoreResult
 import com.beettechnologies.posly.stores.UpdateStoreRequest
+import com.beettechnologies.posly.stores.UploadLogoOutcome
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -55,6 +56,7 @@ private class FakeScreenStoreApi : StoreApi {
     override suspend fun getStore(id: String): StoreResult = error("not used in this test")
     override suspend fun updateStore(id: String, request: UpdateStoreRequest) = error("not used in this test")
     override suspend fun deleteStore(id: String): DeleteStoreResult = error("not used in this test")
+    override suspend fun uploadLogo(storeId: String, fileName: String, bytes: ByteArray): UploadLogoOutcome = error("not used in this test")
 }
 
 private class FakeScreenShiftApi(private val closeOutcome: CloseShiftOutcome? = null) : ShiftApi {

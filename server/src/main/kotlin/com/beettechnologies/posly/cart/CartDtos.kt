@@ -124,6 +124,7 @@ data class OrderResponse(
     val totals: CartTotalsResponse,
     val idempotencyKey: String,
     val checkedOutAt: String,
+    val currency: String,
     val status: String,
     // No defaults here: kotlinx.serialization's Json omits any field left at its declared default
     // when encoding (encodeDefaults = false), and 0.0/emptyList() are exactly the values a fully
@@ -235,6 +236,7 @@ fun Order.toResponse() = OrderResponse(
     totals = totals.toResponse(),
     idempotencyKey = idempotencyKey,
     checkedOutAt = checkedOutAt.toString(),
+    currency = currency,
     status = status.name,
     payments = payments.map { it.toResponse() },
     amountPaid = amountPaid,

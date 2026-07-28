@@ -1,14 +1,21 @@
 package com.beettechnologies.posly.stores
 
+import com.beettechnologies.posly.audit.AuditEvent
+import com.beettechnologies.posly.audit.AuditService
 import com.beettechnologies.posly.auth.ErrorResponse
 import com.beettechnologies.posly.model.Role
+import com.beettechnologies.posly.rbac.tokenClaims
 import com.beettechnologies.posly.rbac.withRole
+import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.content.*
 import io.ktor.server.application.Application
 import io.ktor.server.application.call
 import io.ktor.server.auth.authenticate
 import io.ktor.server.request.receive
+import io.ktor.server.request.receiveMultipart
 import io.ktor.server.response.respond
+import io.ktor.server.response.respondBytes
 import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
@@ -46,7 +53,8 @@ fun Application.configureStoreRoutes(storeService: StoreService) {
                                 address = request.address.toModel(),
                                 timezone = request.timezone,
                                 currency = request.currency,
-                                taxProfileId = request.taxProfileId
+                                taxProfileId = request.taxProfileId,
+                                locale = request.locale
                             )
                         ) {
                             is CreateStoreResult.Created -> call.respond(HttpStatusCode.Created, result.store.toResponse())
@@ -57,6 +65,10 @@ fun Application.configureStoreRoutes(storeService: StoreService) {
                             is CreateStoreResult.InvalidCurrency -> call.respond(
                                 HttpStatusCode.BadRequest,
                                 ErrorResponse("'${result.currency}' is not a valid ISO 4217 currency code")
+                            )
+                            is CreateStoreResult.InvalidLocale -> call.respond(
+                                HttpStatusCode.BadRequest,
+                                ErrorResponse("'${result.locale}' is not a valid locale tag")
                             )
                             CreateStoreResult.TaxProfileNotFound -> call.respond(
                                 HttpStatusCode.BadRequest,
@@ -93,7 +105,8 @@ fun Application.configureStoreRoutes(storeService: StoreService) {
                                 address = request.address?.toModel(),
                                 timezone = request.timezone,
                                 currency = request.currency,
-                                taxProfileId = request.taxProfileId
+                                taxProfileId = request.taxProfileId,
+                                locale = request.locale
                             )
                         ) {
                             is UpdateStoreResult.Updated -> call.respond(HttpStatusCode.OK, result.store.toResponse())
@@ -105,6 +118,10 @@ fun Application.configureStoreRoutes(storeService: StoreService) {
                             is UpdateStoreResult.InvalidCurrency -> call.respond(
                                 HttpStatusCode.BadRequest,
                                 ErrorResponse("'${result.currency}' is not a valid ISO 4217 currency code")
+                            )
+                            is UpdateStoreResult.InvalidLocale -> call.respond(
+                                HttpStatusCode.BadRequest,
+                                ErrorResponse("'${result.locale}' is not a valid locale tag")
                             )
                             UpdateStoreResult.TaxProfileNotFound -> call.respond(
                                 HttpStatusCode.BadRequest,
@@ -121,10 +138,62 @@ fun Application.configureStoreRoutes(storeService: StoreService) {
                             call.respond(HttpStatusCode.NotFound, ErrorResponse("Store not found"))
                         }
                     }
+
+                    post("/{id}/logo") {
+                        val id = call.parameters["id"]!!
+                        val multipart = call.receiveMultipart()
+                        var fileName: String? = null
+                        var bytes: ByteArray? = null
+                        multipart.forEachPart { part ->
+                            if (part is PartData.FileItem && bytes == null) {
+                                val partBytes = part.streamProvider().readBytes()
+                                if (partBytes.isNotEmpty()) {
+                                    fileName = part.originalFileName ?: "logo"
+                                    bytes = partBytes
+                                }
+                            }
+                            part.dispose()
+                        }
+                        val uploadedBytes = bytes
+                        if (uploadedBytes == null) {
+                            call.respond(HttpStatusCode.BadRequest, ErrorResponse("No image file provided in multipart request"))
+                            return@post
+                        }
+                        when (val result = storeService.uploadLogo(id, fileName ?: "logo", uploadedBytes)) {
+                            is UploadLogoResult.Success -> {
+                                AuditService.record(
+                                    AuditEvent.STORE_LOGO_UPDATED,
+                                    userId = call.tokenClaims()?.userId,
+                                    detail = "storeId=$id"
+                                )
+                                call.respond(HttpStatusCode.Created, LogoUploadResponse(logoUrl = result.logoUrl))
+                            }
+                            UploadLogoResult.StoreNotFound -> call.respond(HttpStatusCode.NotFound, ErrorResponse("Store not found"))
+                            is UploadLogoResult.InvalidImage -> call.respond(HttpStatusCode.BadRequest, ErrorResponse(result.message))
+                        }
+                    }
+
+                    get("/{id}/logo") {
+                        val id = call.parameters["id"]!!
+                        val logo = storeService.getLogo(id)
+                        if (logo == null) {
+                            call.respond(HttpStatusCode.NotFound, ErrorResponse("No logo uploaded for this store"))
+                        } else {
+                            call.respondBytes(logo.bytes, contentTypeForFileName(logo.fileName))
+                        }
+                    }
                 }
             }
         }
     }
+}
+
+private fun contentTypeForFileName(fileName: String): ContentType = when (fileName.substringAfterLast('.', "").lowercase()) {
+    "png" -> ContentType.Image.PNG
+    "jpg", "jpeg" -> ContentType.Image.JPEG
+    "gif" -> ContentType.Image.GIF
+    "svg" -> ContentType.Image.SVG
+    else -> ContentType.Application.OctetStream
 }
 
 private fun AddressDto.toModel() = Address(

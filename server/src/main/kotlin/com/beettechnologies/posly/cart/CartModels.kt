@@ -156,6 +156,8 @@ data class Order(
     val totals: CartTotals,
     val idempotencyKey: String,
     val checkedOutAt: Instant,
+    /** Snapshotted from the store's currency at creation time - stays fixed even if the store's currency setting is edited later, so a historical order/receipt never silently reprices in a different currency. */
+    val currency: String = "USD",
     val status: OrderStatus = OrderStatus.PENDING,
     /** One entry per tender applied - a split payment accumulates more than one before the order reaches PAID. */
     val payments: List<PaymentRecord> = emptyList(),

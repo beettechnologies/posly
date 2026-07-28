@@ -4,9 +4,22 @@ import com.beettechnologies.posly.cart.OrderService
 import com.beettechnologies.posly.gateway.GatewayException
 import com.beettechnologies.posly.gateway.RetryPolicy
 import com.beettechnologies.posly.receipts.ReceiptRenderer
+import com.beettechnologies.posly.stores.Address
+import com.beettechnologies.posly.stores.Store
+import com.beettechnologies.posly.stores.StoreService
 import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+
+/** Falls back to sensible defaults when [storeService] is unavailable or an order's storeId no longer resolves to a real store, so receipt rendering degrades gracefully rather than throwing. */
+private fun resolveStore(storeService: StoreService?, storeId: String): Store =
+    storeService?.getStore(storeId) ?: Store(
+        id = storeId,
+        name = "Store",
+        address = Address(line1 = "", city = "", postalCode = "", country = ""),
+        timezone = "UTC",
+        currency = "USD"
+    )
 
 enum class PrintJobStatus { PRINTED, QUEUED }
 
@@ -38,6 +51,7 @@ class PrintService(
     private val orderService: OrderService,
     private val printerRegistryService: PrinterRegistryService,
     private val gateway: PrintGateway,
+    private val storeService: StoreService? = null,
     private val retryPolicy: RetryPolicy = RetryPolicy(),
     private val nowProvider: () -> Instant = { Instant.now() }
 ) {
@@ -53,7 +67,8 @@ class PrintService(
         }
 
         return try {
-            val content = ReceiptRenderer.renderThermalText(order)
+            val store = resolveStore(storeService, order.storeId)
+            val content = ReceiptRenderer.renderThermalText(order, store)
             retryPolicy.withBackoff { gateway.print(printerId, content) }
             val job = PrintJob(orderId = orderId, printerId = printerId, status = PrintJobStatus.PRINTED, createdAt = now)
             jobs[job.id] = job

@@ -8,6 +8,7 @@ import com.beettechnologies.posly.stores.StoreListResult
 import com.beettechnologies.posly.stores.StoreResponse
 import com.beettechnologies.posly.stores.StoreResult
 import com.beettechnologies.posly.stores.UpdateStoreRequest
+import com.beettechnologies.posly.stores.UploadLogoOutcome
 import com.beettechnologies.posly.users.InviteUserOutcome
 import com.beettechnologies.posly.users.UserResult
 import kotlinx.coroutines.Dispatchers
@@ -40,6 +41,7 @@ private class FakeFormStoreApi(private val stores: List<StoreResponse> = listOf(
     override suspend fun getStore(id: String): StoreResult = error("not used in this test")
     override suspend fun updateStore(id: String, request: UpdateStoreRequest) = error("not used in this test")
     override suspend fun deleteStore(id: String): DeleteStoreResult = error("not used in this test")
+    override suspend fun uploadLogo(storeId: String, fileName: String, bytes: ByteArray): UploadLogoOutcome = error("not used in this test")
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)

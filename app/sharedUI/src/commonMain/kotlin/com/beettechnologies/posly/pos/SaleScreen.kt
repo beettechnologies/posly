@@ -36,6 +36,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.beettechnologies.posly.format.formatCurrencyAmount
 import com.beettechnologies.posly.products.SearchResultItem
 import org.koin.compose.viewmodel.koinViewModel
 
@@ -150,7 +151,12 @@ fun SaleScreen(
 
                 LazyColumn(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
                     items(uiState.suggestions) { item ->
-                        SuggestionRow(item, onClick = { viewModel.onSuggestionSelected(item) })
+                        SuggestionRow(
+                            item,
+                            currencyCode = uiState.currencyCode,
+                            localeTag = uiState.localeTag,
+                            onClick = { viewModel.onSuggestionSelected(item) }
+                        )
                     }
                 }
             }
@@ -189,7 +195,7 @@ fun SaleScreen(
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
                                     Text(item.productName)
-                                    Text("$${item.lineTotal}")
+                                    Text(formatCurrencyAmount(item.lineTotal, uiState.currencyCode, uiState.localeTag))
                                 }
                                 Row(
                                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
@@ -249,25 +255,25 @@ fun SaleScreen(
                 HorizontalDivider(modifier = Modifier.padding(top = 8.dp))
                 val totals = uiState.cart?.totals
                 Column(modifier = Modifier.padding(top = 8.dp)) {
-                    Text("Subtotal: $${totals?.subtotal ?: 0.0}")
+                    Text("Subtotal: ${formatCurrencyAmount(totals?.subtotal ?: 0.0, uiState.currencyCode, uiState.localeTag)}")
                     if ((totals?.cartDiscountAmount ?: 0.0) > 0.0 || (totals?.itemDiscountTotal ?: 0.0) > 0.0) {
                         Text(
-                            "Discount: -$${(totals?.cartDiscountAmount ?: 0.0) + (totals?.itemDiscountTotal ?: 0.0)}",
+                            "Discount: -${formatCurrencyAmount((totals?.cartDiscountAmount ?: 0.0) + (totals?.itemDiscountTotal ?: 0.0), uiState.currencyCode, uiState.localeTag)}",
                             modifier = Modifier.testTag(SaleScreenTags.DISCOUNT_TEXT)
                         )
                     }
                     totals?.taxBreakdown?.forEachIndexed { index, line ->
                         Text(
-                            "${line.name} (${line.ratePercent}%): $${line.amount}",
+                            "${line.name} (${line.ratePercent}%): ${formatCurrencyAmount(line.amount, uiState.currencyCode, uiState.localeTag)}",
                             modifier = Modifier.testTag(SaleScreenTags.TAX_LINE_PREFIX + index)
                         )
                     }
                     Text(
-                        "Tax: $${totals?.totalTax ?: 0.0}",
+                        "Tax: ${formatCurrencyAmount(totals?.totalTax ?: 0.0, uiState.currencyCode, uiState.localeTag)}",
                         modifier = Modifier.testTag(SaleScreenTags.TAX_TOTAL_TEXT)
                     )
                     Text(
-                        "Total: $${totals?.total ?: 0.0}",
+                        "Total: ${formatCurrencyAmount(totals?.total ?: 0.0, uiState.currencyCode, uiState.localeTag)}",
                         style = MaterialTheme.typography.titleMedium,
                         modifier = Modifier.testTag(SaleScreenTags.TOTAL_TEXT)
                     )
@@ -342,7 +348,7 @@ fun SaleScreen(
 }
 
 @Composable
-private fun SuggestionRow(item: SearchResultItem, onClick: () -> Unit) {
+private fun SuggestionRow(item: SearchResultItem, currencyCode: String, localeTag: String, onClick: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -355,7 +361,7 @@ private fun SuggestionRow(item: SearchResultItem, onClick: () -> Unit) {
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(item.name)
-            Text("$${item.price}")
+            Text(formatCurrencyAmount(item.price, currencyCode, localeTag))
         }
     }
 }

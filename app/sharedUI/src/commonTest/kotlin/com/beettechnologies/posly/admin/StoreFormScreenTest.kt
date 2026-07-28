@@ -20,6 +20,7 @@ import com.beettechnologies.posly.stores.TaxProfileListResult
 import com.beettechnologies.posly.stores.TaxProfileResult
 import com.beettechnologies.posly.stores.UpdateStoreRequest
 import com.beettechnologies.posly.stores.UpdateTaxProfileRequest
+import com.beettechnologies.posly.stores.UploadLogoOutcome
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -61,6 +62,7 @@ private class FakeStoreApi(
     override suspend fun getStore(id: String): StoreResult = createResult
     override suspend fun updateStore(id: String, request: UpdateStoreRequest): StoreResult = createResult
     override suspend fun deleteStore(id: String): DeleteStoreResult = DeleteStoreResult.Success
+    override suspend fun uploadLogo(storeId: String, fileName: String, bytes: ByteArray): UploadLogoOutcome = error("not used in this test")
 }
 
 private class FakeTaxProfileApi : TaxProfileApi {

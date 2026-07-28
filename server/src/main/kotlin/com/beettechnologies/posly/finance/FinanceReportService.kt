@@ -202,12 +202,17 @@ class FinanceReportService(
         timezone: String
     ): GeneratedReport {
         val now = nowProvider()
+        val store = storeService.getStore(storeId)
+        val currency = store?.currency ?: "USD"
+        val localeTag = store?.locale ?: "en-US"
         val table = when (type) {
-            FinanceReportType.TAX -> FinanceReportBuilder.buildTaxTable(orderService.listOrders(storeId, from, to))
-            FinanceReportType.SALES -> FinanceReportBuilder.buildSalesTable(orderService.listOrders(storeId, from, to), timezone)
+            FinanceReportType.TAX -> FinanceReportBuilder.buildTaxTable(orderService.listOrders(storeId, from, to), currency, localeTag)
+            FinanceReportType.SALES -> FinanceReportBuilder.buildSalesTable(orderService.listOrders(storeId, from, to), timezone, currency, localeTag)
             FinanceReportType.RECONCILIATION -> FinanceReportBuilder.buildReconciliationTable(
                 shiftService.listShifts(storeId).filter { it.closedAt != null && !it.closedAt.isBefore(from) && it.closedAt.isBefore(to) },
-                timezone
+                timezone,
+                currency,
+                localeTag
             )
         }
         val bytes = when (format) {

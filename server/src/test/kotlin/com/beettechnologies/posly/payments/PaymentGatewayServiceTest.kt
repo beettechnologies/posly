@@ -75,7 +75,7 @@ class PaymentGatewayServiceTest {
         TestDatabase.reset()
     }
 
-    private fun seedOrder(orderService: OrderService, amount: Double = 10.0): Order {
+    private fun seedOrder(orderService: OrderService, amount: Double = 10.0, currency: String = "USD"): Order {
         val now = Instant.parse("2026-01-01T00:00:00Z")
         val cart = Cart(
             id = "cart-1",
@@ -88,7 +88,7 @@ class PaymentGatewayServiceTest {
             updatedAt = now
         )
         val totals = CartTotals(amount, 0.0, 0.0, amount, emptyList(), 0.0, amount)
-        return orderService.createOrder(cart, totals, "checkout-key-1")
+        return orderService.createOrder(cart, totals, "checkout-key-1", currency = currency)
     }
 
     private fun newService(
@@ -123,6 +123,17 @@ class PaymentGatewayServiceTest {
         val success = assertIs<CreatePaymentResult.Success>(result)
         assertEquals(GatewayPaymentStatus.INITIATED, success.payment.status)
         assertTrue(success.payment.terminalTransactionId.isNotBlank())
+    }
+
+    @Test
+    fun `createPayment uses the order's own currency, ignoring whatever the client claims`() = runBlocking {
+        val (service, orderService) = newService()
+        val order = seedOrder(orderService, currency = "EUR")
+
+        val result = service.createPayment(order.id, 10.0, "USD")
+
+        val success = assertIs<CreatePaymentResult.Success>(result)
+        assertEquals("EUR", success.payment.currency)
     }
 
     @Test

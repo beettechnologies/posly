@@ -64,12 +64,29 @@ class FinanceReportBuilderTest {
 
         assertEquals(listOf("Tax Rate", "Rate %", "Orders", "Tax Collected"), table.headers)
         val vatRow = table.rows.first { it[0] == "City Tax" }
-        assertEquals(listOf("City Tax", "2.0%", "1", "4.00"), vatRow)
+        assertEquals(listOf("City Tax", "2.0%", "1", "$4.00"), vatRow)
         val cityRow = table.rows.first { it[0] == "VAT" }
-        assertEquals(listOf("VAT", "20.0%", "2", "30.00"), cityRow)
+        assertEquals(listOf("VAT", "20.0%", "2", "$30.00"), cityRow)
         val totalRow = table.rows.last()
         assertEquals("TOTAL", totalRow[0])
-        assertEquals("34.00", totalRow[3])
+        assertEquals("$34.00", totalRow[3])
+    }
+
+    @Test
+    fun `buildTaxTable formats amounts using the given currency and locale`() {
+        val orders = OrderService()
+        val storeId = "store-1"
+        seedOrder(orders, storeId, 100.0, Instant.parse("2026-01-15T09:00:00Z"), listOf(TaxBreakdownLine("VAT", 20.0, 20.0)), 20.0)
+
+        val table = FinanceReportBuilder.buildTaxTable(
+            orders.listOrders(storeId, Instant.parse("2026-01-15T00:00:00Z"), Instant.parse("2026-01-16T00:00:00Z")),
+            currency = "EUR",
+            localeTag = "de-DE"
+        )
+
+        val vatRow = table.rows.first { it[0] == "VAT" }
+        assertTrue(vatRow[3].contains("20,00"), "expected German-grouped EUR formatting, got: ${vatRow[3]}")
+        assertTrue(vatRow[3].contains("€"))
     }
 
     // -------------------------------------------------------------------------
@@ -94,7 +111,7 @@ class FinanceReportBuilderTest {
         assertEquals(1, dayRows.size, "both orders fall on the same New York local day")
         assertEquals("2026-01-15", dayRows.single()[0])
         assertEquals("2", dayRows.single()[1])
-        assertEquals("30.00", dayRows.single()[3])
+        assertEquals("$30.00", dayRows.single()[3])
     }
 
     @Test
@@ -143,7 +160,25 @@ class FinanceReportBuilderTest {
         assertEquals("OVER", overRow.last())
         val totalRow = table.rows.last()
         assertEquals("1 over / 1 short", totalRow.last())
-        assertEquals("5.00", totalRow[7])
+        assertEquals("$5.00", totalRow[7])
+    }
+
+    @Test
+    fun `buildReconciliationTable formats amounts using the given currency and locale`() {
+        val shifts = listOf(
+            Shift(
+                storeId = "store-1", cashierId = "cashier-1", openingFloat = 100.0,
+                openedAt = Instant.parse("2026-01-15T09:00:00Z"), status = ShiftStatus.CLOSED,
+                closingCount = 90.0, expectedCash = 100.0, variance = -10.0,
+                closedAt = Instant.parse("2026-01-15T17:00:00Z")
+            )
+        )
+
+        val table = FinanceReportBuilder.buildReconciliationTable(shifts, timezone = "UTC", currency = "EUR", localeTag = "de-DE")
+
+        val row = table.rows.first { it[1] == "cashier-1" }
+        assertTrue(row[4].contains("100,00"), "expected German-grouped EUR formatting for opening float, got: ${row[4]}")
+        assertTrue(row[4].contains("€"))
     }
 
     // -------------------------------------------------------------------------

@@ -79,17 +79,19 @@ class PaymentGatewayService(
     private val processedWebhookEventIds = ConcurrentHashMap.newKeySet<String>()
     private val refundAttempts = ConcurrentHashMap<String, RefundAttempt>()
 
+    /** [currency] is intentionally ignored in favor of the order's own snapshotted [Order.currency] - a client-supplied currency can't be trusted to actually match what the order was priced in (e.g. `CreatePaymentRequest.currency` on the frontend used to hardcode `"USD"` regardless of the store's real configured currency). */
     suspend fun createPayment(orderId: String, amount: Double, currency: String): CreatePaymentResult {
-        if (orderService.getOrder(orderId) == null) return CreatePaymentResult.OrderNotFound
+        val order = orderService.getOrder(orderId) ?: return CreatePaymentResult.OrderNotFound
+        val resolvedCurrency = order.currency
 
         return try {
-            val terminalTransactionId = retryPolicy.withBackoff { gateway.createPayment(orderId, amount, currency) }
+            val terminalTransactionId = retryPolicy.withBackoff { gateway.createPayment(orderId, amount, resolvedCurrency) }
             val now = nowProvider()
             val payment = GatewayPayment(
                 orderId = orderId,
                 terminalTransactionId = terminalTransactionId,
                 amount = amount,
-                currency = currency,
+                currency = resolvedCurrency,
                 status = GatewayPaymentStatus.INITIATED,
                 createdAt = now,
                 updatedAt = now

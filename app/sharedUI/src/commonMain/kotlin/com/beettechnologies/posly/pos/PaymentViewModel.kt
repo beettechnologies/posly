@@ -9,6 +9,7 @@ import com.beettechnologies.posly.orders.OrderResponse
 import com.beettechnologies.posly.payments.CreatePaymentOutcome
 import com.beettechnologies.posly.payments.GetPaymentOutcome
 import com.beettechnologies.posly.payments.PaymentApi
+import com.beettechnologies.posly.stores.StoreSettingsCache
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -31,7 +32,9 @@ data class PaymentUiState(
     val terminalState: TerminalState = TerminalState.IDLE,
     val errorMessage: String? = null,
     val isConfirming: Boolean = false,
-    val completedOrder: OrderResponse? = null
+    val completedOrder: OrderResponse? = null,
+    val currencyCode: String = "USD",
+    val localeTag: String = "en-US"
 ) {
     val total: Double get() = order?.totals?.total ?: 0.0
     val remainingBalance: Double get() = order?.remainingBalance ?: 0.0
@@ -65,7 +68,8 @@ class PaymentViewModel(
     private val orderApi: OrderApi,
     private val paymentApi: PaymentApi,
     private val pollIntervalMillis: Long = 1000,
-    private val pollTimeoutMillis: Long = 15000
+    private val pollTimeoutMillis: Long = 15000,
+    private val storeSettingsCache: StoreSettingsCache? = null
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(PaymentUiState())
@@ -77,11 +81,16 @@ class PaymentViewModel(
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoadingOrder = true, loadError = null)
             when (val result = orderApi.getOrder(orderId)) {
-                is GetOrderOutcome.Success -> _uiState.value = _uiState.value.copy(
-                    isLoadingOrder = false,
-                    order = result.order,
-                    amountToApply = result.order.remainingBalance.toString()
-                )
+                is GetOrderOutcome.Success -> {
+                    val store = storeSettingsCache?.getStore(result.order.storeId)
+                    _uiState.value = _uiState.value.copy(
+                        isLoadingOrder = false,
+                        order = result.order,
+                        amountToApply = result.order.remainingBalance.toString(),
+                        currencyCode = result.order.currency,
+                        localeTag = store?.locale ?: "en-US"
+                    )
+                }
                 GetOrderOutcome.NotFound -> _uiState.value =
                     _uiState.value.copy(isLoadingOrder = false, loadError = "Order not found")
                 is GetOrderOutcome.NetworkError -> _uiState.value =

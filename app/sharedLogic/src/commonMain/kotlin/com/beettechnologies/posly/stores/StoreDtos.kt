@@ -18,7 +18,8 @@ data class CreateStoreRequest(
     val address: AddressDto,
     val timezone: String,
     val currency: String,
-    val taxProfileId: String? = null
+    val taxProfileId: String? = null,
+    val locale: String = "en-US"
 )
 
 @Serializable
@@ -27,7 +28,8 @@ data class UpdateStoreRequest(
     val address: AddressDto? = null,
     val timezone: String? = null,
     val currency: String? = null,
-    val taxProfileId: String? = null
+    val taxProfileId: String? = null,
+    val locale: String? = null
 )
 
 @Serializable
@@ -37,7 +39,12 @@ data class StoreResponse(
     val address: AddressDto,
     val timezone: String,
     val currency: String,
+    val locale: String = "en-US",
     val taxProfileId: String? = null,
+    val logoUrl: String? = null,
     val createdAt: Long,
     val updatedAt: Long
 )
+
+@Serializable
+data class LogoUploadResponse(val logoUrl: String)

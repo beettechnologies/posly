@@ -23,10 +23,20 @@ object StoresTable : Table("stores") {
     val address = jsonb<Address>("address", json, Address.serializer(), true)
     val timezone = varchar("timezone", 100)
     val currency = varchar("currency", 10)
+    val locale = varchar("locale", 35)
     val taxProfileId = varchar("tax_profile_id", 36).nullable()
     val createdAt = long("created_at")
     val updatedAt = long("updated_at")
     override val primaryKey = PrimaryKey(id)
+}
+
+/** One logo per store - re-uploading replaces the existing row rather than appending, unlike [ProductImagesTable]. */
+object StoreLogosTable : Table("store_logos") {
+    val storeId = varchar("store_id", 36)
+    val fileName = varchar("file_name", 255)
+    val bytes = blob("bytes")
+    val uploadedAt = long("uploaded_at")
+    override val primaryKey = PrimaryKey(storeId)
 }
 
 object TaxProfilesTable : Table("tax_profiles") {
@@ -92,6 +102,7 @@ object OrdersTable : Table("orders") {
     val totals = jsonb<CartTotals>("totals", json, CartTotals.serializer(), true)
     val idempotencyKey = varchar("idempotency_key", 255)
     val checkedOutAt = timestamp("checked_out_at")
+    val currency = varchar("currency", 10)
     val status = varchar("status", 30)
     val payments = jsonb<List<PaymentRecord>>("payments", json, ListSerializer(PaymentRecord.serializer()), true)
     val refunds = jsonb<List<RefundRecord>>("refunds", json, ListSerializer(RefundRecord.serializer()), true)

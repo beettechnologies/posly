@@ -4,9 +4,22 @@ import com.beettechnologies.posly.cart.OrderService
 import com.beettechnologies.posly.gateway.GatewayException
 import com.beettechnologies.posly.gateway.RetryPolicy
 import com.beettechnologies.posly.receipts.ReceiptRenderer
+import com.beettechnologies.posly.stores.Address
+import com.beettechnologies.posly.stores.Store
+import com.beettechnologies.posly.stores.StoreService
 import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+
+/** Falls back to sensible defaults when [storeService] is unavailable or an order's storeId no longer resolves to a real store, so receipt rendering degrades gracefully rather than throwing. */
+private fun resolveStore(storeService: StoreService?, storeId: String): Store =
+    storeService?.getStore(storeId) ?: Store(
+        id = storeId,
+        name = "Store",
+        address = Address(line1 = "", city = "", postalCode = "", country = ""),
+        timezone = "UTC",
+        currency = "USD"
+    )
 
 private val EMAIL_PATTERN = Regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")
 
@@ -37,6 +50,7 @@ sealed class SendReceiptEmailResult {
 class EmailService(
     private val orderService: OrderService,
     private val gateway: EmailGateway,
+    private val storeService: StoreService? = null,
     private val retryPolicy: RetryPolicy = RetryPolicy(),
     private val nowProvider: () -> Instant = { Instant.now() }
 ) {
@@ -50,7 +64,9 @@ class EmailService(
         val now = nowProvider()
 
         return try {
-            val pdfBytes = ReceiptRenderer.renderPdf(order)
+            val store = resolveStore(storeService, order.storeId)
+            val logoBytes = storeService?.getLogo(order.storeId)?.bytes
+            val pdfBytes = ReceiptRenderer.renderPdf(order, store, logoBytes)
             retryPolicy.withBackoff { gateway.sendReceipt(recipient, subject = "Your receipt", pdfBytes = pdfBytes) }
             val record = EmailRecord(orderId = orderId, recipient = recipient, status = EmailStatus.SENT, sentAt = now)
             emails[record.id] = record

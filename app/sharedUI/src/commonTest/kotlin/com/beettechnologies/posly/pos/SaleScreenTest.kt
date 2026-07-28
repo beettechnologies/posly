@@ -293,10 +293,10 @@ class SaleScreenTest {
         setContent { SaleScreen(onBack = {}, viewModel = viewModel) }
         waitForIdle()
 
-        onNodeWithTag(SaleScreenTags.TAX_LINE_PREFIX + 0).assertTextEquals("GST (5.0%): \$10.0")
-        onNodeWithTag(SaleScreenTags.TAX_LINE_PREFIX + 1).assertTextEquals("PST (7.0%): \$14.7")
-        onNodeWithTag(SaleScreenTags.TAX_TOTAL_TEXT).assertTextEquals("Tax: \$24.7")
-        onNodeWithTag(SaleScreenTags.TOTAL_TEXT).assertTextEquals("Total: \$224.7")
+        onNodeWithTag(SaleScreenTags.TAX_LINE_PREFIX + 0).assertTextEquals("GST (5.0%): \$10.00")
+        onNodeWithTag(SaleScreenTags.TAX_LINE_PREFIX + 1).assertTextEquals("PST (7.0%): \$14.70")
+        onNodeWithTag(SaleScreenTags.TAX_TOTAL_TEXT).assertTextEquals("Tax: \$24.70")
+        onNodeWithTag(SaleScreenTags.TOTAL_TEXT).assertTextEquals("Total: \$224.70")
     }
 
     @Test
@@ -312,6 +312,6 @@ class SaleScreenTest {
         waitForIdle()
 
         onNodeWithTag(SaleScreenTags.TAX_LINE_PREFIX + 0).assertDoesNotExist()
-        onNodeWithTag(SaleScreenTags.TAX_TOTAL_TEXT).assertTextEquals("Tax: \$0.0")
+        onNodeWithTag(SaleScreenTags.TAX_TOTAL_TEXT).assertTextEquals("Tax: \$0.00")
     }
 }

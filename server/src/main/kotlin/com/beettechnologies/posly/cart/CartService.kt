@@ -275,7 +275,8 @@ class CartService(
             if (cart.items.isEmpty()) return CheckoutResult.EmptyCart
 
             val totals = getTotals(cart)
-            val order = orderService.createOrder(cart, totals, idempotencyKey)
+            val currency = storeService.getStore(cart.storeId)?.currency ?: "USD"
+            val order = orderService.createOrder(cart, totals, idempotencyKey, currency = currency)
             try {
                 beforeCartCommitForTesting?.invoke()
                 carts[cartId] = cart.copy(

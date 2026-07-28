@@ -8,6 +8,7 @@ import com.beettechnologies.posly.db.ProductImagesTable
 import com.beettechnologies.posly.db.ProductsTable
 import com.beettechnologies.posly.db.ShiftAuditEventsTable
 import com.beettechnologies.posly.db.ShiftsTable
+import com.beettechnologies.posly.db.StoreLogosTable
 import com.beettechnologies.posly.db.StoresTable
 import com.beettechnologies.posly.db.TaxProfilesTable
 import com.beettechnologies.posly.db.UsersTable
@@ -35,7 +36,7 @@ object TestDatabase {
         Database.connect(url = TEST_JDBC_URL, driver = "org.h2.Driver", user = "sa", password = "")
         transaction {
             SchemaUtils.create(
-                StoresTable, TaxProfilesTable, ProductsTable, ProductImagesTable,
+                StoresTable, StoreLogosTable, TaxProfilesTable, ProductsTable, ProductImagesTable,
                 UsersTable, OrdersTable, OrderEventsTable, ShiftsTable, ShiftAuditEventsTable,
                 FeatureFlagsTable, AuditTable
             )
@@ -52,6 +53,7 @@ object TestDatabase {
             ProductsTable.deleteAll()
             UsersTable.deleteAll()
             TaxProfilesTable.deleteAll()
+            StoreLogosTable.deleteAll()
             StoresTable.deleteAll()
             FeatureFlagsTable.deleteAll()
             AuditTable.deleteAll()

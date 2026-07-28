@@ -32,6 +32,7 @@ object DatabaseFactory {
         transaction {
             SchemaUtils.create(
                 StoresTable,
+                StoreLogosTable,
                 TaxProfilesTable,
                 ProductsTable,
                 ProductImagesTable,

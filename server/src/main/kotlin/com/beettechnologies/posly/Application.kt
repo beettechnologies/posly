@@ -133,12 +133,12 @@ fun Application.module() {
         secretsManager,
         autoResolveScope = this
     )
-    val offlineSyncService = OfflineSyncService(deviceRegistryService, productService, cartService, orderService)
+    val offlineSyncService = OfflineSyncService(deviceRegistryService, productService, cartService, orderService, storeService)
     val productImportService = ProductImportService(productService, importScope = this)
     val printerRegistryService = PrinterRegistryService()
-    val printService = PrintService(orderService, printerRegistryService, SimulatorPrintGateway())
+    val printService = PrintService(orderService, printerRegistryService, SimulatorPrintGateway(), storeService)
     val emailGateway = SimulatorEmailGateway()
-    val emailService = EmailService(orderService, emailGateway)
+    val emailService = EmailService(orderService, emailGateway, storeService)
     val financeReportService = FinanceReportService(
         orderService, shiftService, storeService, emailGateway,
         scheduleScope = this

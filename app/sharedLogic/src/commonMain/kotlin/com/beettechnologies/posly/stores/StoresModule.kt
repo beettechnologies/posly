@@ -7,4 +7,5 @@ import org.koin.dsl.module
 val storesModule: Module = module {
     single<StoreApi> { KtorStoreApi(get(), defaultBaseUrl) }
     single<TaxProfileApi> { KtorTaxProfileApi(get(), defaultBaseUrl) }
+    single { StoreSettingsCache(get()) }
 }

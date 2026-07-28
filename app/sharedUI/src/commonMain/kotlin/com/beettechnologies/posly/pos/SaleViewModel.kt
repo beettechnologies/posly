@@ -19,6 +19,7 @@ import com.beettechnologies.posly.orders.OrderResponse
 import com.beettechnologies.posly.products.ProductSearchApi
 import com.beettechnologies.posly.products.SearchOutcome
 import com.beettechnologies.posly.products.SearchResultItem
+import com.beettechnologies.posly.stores.StoreSettingsCache
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -48,7 +49,10 @@ data class SaleUiState(
     val lastVoidedItem: VoidedCartItem? = null,
     val isCheckingOut: Boolean = false,
     val checkedOutOrderId: String? = null,
-    val receiptOrder: OrderResponse? = null
+    val receiptOrder: OrderResponse? = null,
+    /** The paired device's store currency/locale, resolved once at startup - used to format every money amount shown on this screen. Falls back to USD/en-US if the store can't be resolved. */
+    val currencyCode: String = "USD",
+    val localeTag: String = "en-US"
 )
 
 class SaleViewModel(
@@ -56,6 +60,7 @@ class SaleViewModel(
     private val cartSessionStore: CartSessionStore,
     private val cartApi: CartApi,
     private val productSearchApi: ProductSearchApi,
+    private val storeSettingsCache: StoreSettingsCache? = null,
     private val debounceMillis: Long = DEFAULT_DEBOUNCE_MILLIS
 ) : ViewModel() {
 
@@ -73,6 +78,11 @@ class SaleViewModel(
         if (storeId == null) {
             _uiState.value = _uiState.value.copy(errorMessage = "This device is not paired to a store")
             return
+        }
+
+        val store = storeSettingsCache?.getStore(storeId)
+        if (store != null) {
+            _uiState.value = _uiState.value.copy(currencyCode = store.currency, localeTag = store.locale)
         }
 
         val savedCartId = cartSessionStore.getCurrentCartId()

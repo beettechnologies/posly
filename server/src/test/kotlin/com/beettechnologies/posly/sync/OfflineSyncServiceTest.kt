@@ -25,14 +25,14 @@ import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-private class Harness {
+private class Harness(currency: String = "USD") {
     val products = ProductService()
     val taxProfiles = TaxProfileService()
     val stores = StoreService(taxProfiles)
     val orders = OrderService()
     val carts = CartService(products, stores, taxProfiles, orders)
     val devices = DeviceRegistryService()
-    val sync = OfflineSyncService(devices, products, carts, orders)
+    val sync = OfflineSyncService(devices, products, carts, orders, stores)
 
     val taxProfileId = taxProfiles.createProfile(name = "Sales Tax", rates = listOf(TaxRate("Sales Tax", 0.0))).id
     val storeId = (
@@ -40,7 +40,7 @@ private class Harness {
             name = "Downtown",
             address = Address(line1 = "1 Main St", city = "New York", postalCode = "10001", country = "US"),
             timezone = "America/New_York",
-            currency = "USD",
+            currency = currency,
             taxProfileId = taxProfileId
         ) as CreateStoreResult.Created
         ).store.id
@@ -110,6 +110,17 @@ class OfflineSyncServiceTest {
         val order = h.orders.getOrder(result.record.orderId!!)!!
         assertEquals(OrderStatus.PAID, order.status)
         assertEquals(10.0, order.totals.total)
+    }
+
+    @Test
+    fun `an offline sale stamps the order's currency from the device's store currency`() {
+        val h = Harness(currency = "EUR")
+        h.seedProduct("SKU-1", price = 10.0)
+
+        val result = h.ingestOne(h.sale("key-1", listOf(h.item("SKU-1", unitPriceAtSale = 10.0))))
+
+        val order = h.orders.getOrder(result.record.orderId!!)!!
+        assertEquals("EUR", order.currency)
     }
 
     @Test

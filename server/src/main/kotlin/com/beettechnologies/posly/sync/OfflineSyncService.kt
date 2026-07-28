@@ -16,6 +16,7 @@ import com.beettechnologies.posly.devices.DeviceRegistryService
 import com.beettechnologies.posly.products.Product
 import com.beettechnologies.posly.products.ProductService
 import com.beettechnologies.posly.products.TaxCategory
+import com.beettechnologies.posly.stores.StoreService
 import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -52,6 +53,7 @@ class OfflineSyncService(
     private val productService: ProductService,
     private val cartService: CartService,
     private val orderService: OrderService,
+    private val storeService: StoreService? = null,
     private val nowProvider: () -> Instant = { Instant.now() }
 ) {
     private val ledger = ConcurrentHashMap<String, OfflineSaleRecord>()
@@ -167,7 +169,8 @@ class OfflineSyncService(
             return rejected(conflicts)
         }
 
-        val order = orderService.createOrder(cart, totals, sale.idempotencyKey, checkedOutAt = sale.soldAt)
+        val currency = storeService?.getStore(device.storeId)?.currency ?: "USD"
+        val order = orderService.createOrder(cart, totals, sale.idempotencyKey, checkedOutAt = sale.soldAt, currency = currency)
         for (payment in sale.payments) {
             val result = orderService.confirmPayment(
                 orderId = order.id,

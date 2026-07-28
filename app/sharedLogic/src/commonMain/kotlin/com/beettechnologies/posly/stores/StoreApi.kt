@@ -4,12 +4,16 @@ import com.beettechnologies.posly.auth.ErrorResponse
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.delete
+import io.ktor.client.request.forms.MultiPartFormDataContent
+import io.ktor.client.request.forms.formData
 import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.http.ContentType
+import io.ktor.http.Headers
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import kotlinx.coroutines.CancellationException
@@ -35,12 +39,20 @@ sealed class DeleteStoreResult {
     data class NetworkError(val message: String) : DeleteStoreResult()
 }
 
+sealed class UploadLogoOutcome {
+    data class Success(val response: LogoUploadResponse) : UploadLogoOutcome()
+    data class Rejected(val message: String) : UploadLogoOutcome()
+    data object Forbidden : UploadLogoOutcome()
+    data class NetworkError(val message: String) : UploadLogoOutcome()
+}
+
 interface StoreApi {
     suspend fun createStore(request: CreateStoreRequest): StoreResult
     suspend fun listStores(): StoreListResult
     suspend fun getStore(id: String): StoreResult
     suspend fun updateStore(id: String, request: UpdateStoreRequest): StoreResult
     suspend fun deleteStore(id: String): DeleteStoreResult
+    suspend fun uploadLogo(storeId: String, fileName: String, bytes: ByteArray): UploadLogoOutcome
 }
 
 class KtorStoreApi(
@@ -107,6 +119,33 @@ class KtorStoreApi(
         throw e
     } catch (e: Exception) {
         DeleteStoreResult.NetworkError(e.message ?: "Network error")
+    }
+
+    override suspend fun uploadLogo(storeId: String, fileName: String, bytes: ByteArray): UploadLogoOutcome = try {
+        val response = httpClient.post("$baseUrl/stores/$storeId/logo") {
+            setBody(
+                MultiPartFormDataContent(
+                    formData {
+                        append("file", bytes, Headers.build {
+                            append(HttpHeaders.ContentDisposition, "filename=\"$fileName\"")
+                        })
+                    }
+                )
+            )
+        }
+        when (response.status) {
+            HttpStatusCode.Created -> UploadLogoOutcome.Success(response.body())
+            HttpStatusCode.Forbidden -> UploadLogoOutcome.Forbidden
+            HttpStatusCode.BadRequest -> {
+                val error = runCatching { response.body<ErrorResponse>() }.getOrNull()
+                UploadLogoOutcome.Rejected(error?.error ?: "Invalid request")
+            }
+            else -> UploadLogoOutcome.NetworkError("Server error (${response.status.value})")
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        UploadLogoOutcome.NetworkError(e.message ?: "Network error")
     }
 
     private suspend fun toStoreResult(response: HttpResponse): StoreResult = when (response.status) {

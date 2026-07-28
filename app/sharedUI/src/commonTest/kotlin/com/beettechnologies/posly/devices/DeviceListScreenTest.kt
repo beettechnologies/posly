@@ -15,6 +15,7 @@ import com.beettechnologies.posly.stores.StoreListResult
 import com.beettechnologies.posly.stores.StoreResponse
 import com.beettechnologies.posly.stores.StoreResult
 import com.beettechnologies.posly.stores.UpdateStoreRequest
+import com.beettechnologies.posly.stores.UploadLogoOutcome
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -41,6 +42,7 @@ private class FakeStoreApi : StoreApi {
     override suspend fun getStore(id: String): StoreResult = error("not used in these tests")
     override suspend fun updateStore(id: String, request: UpdateStoreRequest): StoreResult = error("not used in these tests")
     override suspend fun deleteStore(id: String): DeleteStoreResult = error("not used in these tests")
+    override suspend fun uploadLogo(storeId: String, fileName: String, bytes: ByteArray): UploadLogoOutcome = error("not used in these tests")
 }
 
 private class FakeDeviceListApi(

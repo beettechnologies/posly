@@ -29,12 +29,12 @@ private class Harness(beforeCartCommitForTesting: (() -> Unit)? = null) {
     fun seedTaxProfile(ratePercent: Double = 10.0): String =
         taxProfiles.createProfile(name = "Sales Tax", rates = listOf(TaxRate("Sales Tax", ratePercent))).id
 
-    fun seedStore(taxProfileId: String? = null): String {
+    fun seedStore(taxProfileId: String? = null, currency: String = "USD"): String {
         val result = stores.createStore(
             name = "Downtown",
             address = Address(line1 = "1 Main St", city = "New York", postalCode = "10001", country = "US"),
             timezone = "America/New_York",
-            currency = "USD",
+            currency = currency,
             taxProfileId = taxProfileId
         )
         return (result as CreateStoreResult.Created).store.id
@@ -283,6 +283,34 @@ class CartServiceTest {
         val result = assertIs<CheckoutResult.Success>(h.carts.checkout(cart.id, "key-1"))
 
         assertEquals(OrderStatus.PENDING, result.order.status)
+    }
+
+    @Test
+    fun `checkout stamps the order's currency from the store's currency at creation time`() {
+        val h = Harness()
+        val storeId = h.seedStore(currency = "EUR")
+        val productId = h.seedProduct(price = 10.0)
+        val cart = (h.carts.createCart(storeId, null) as CreateCartResult.Success).cart
+        h.carts.addItem(cart.id, productId, quantity = 1)
+
+        val result = assertIs<CheckoutResult.Success>(h.carts.checkout(cart.id, "key-1"))
+
+        assertEquals("EUR", result.order.currency)
+    }
+
+    @Test
+    fun `changing a store's currency after checkout does not retroactively change an existing order's currency`() {
+        val h = Harness()
+        val storeId = h.seedStore(currency = "EUR")
+        val productId = h.seedProduct(price = 10.0)
+        val cart = (h.carts.createCart(storeId, null) as CreateCartResult.Success).cart
+        h.carts.addItem(cart.id, productId, quantity = 1)
+        val result = assertIs<CheckoutResult.Success>(h.carts.checkout(cart.id, "key-1"))
+
+        h.stores.updateStore(id = storeId, name = null, address = null, timezone = null, currency = "JPY", taxProfileId = null)
+
+        val reloaded = h.orders.getOrder(result.order.id)!!
+        assertEquals("EUR", reloaded.currency, "an already-created order must keep the currency it was actually charged in")
     }
 
     @Test

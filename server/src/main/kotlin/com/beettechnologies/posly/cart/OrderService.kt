@@ -91,6 +91,7 @@ private fun rowToOrder(row: ResultRow) = Order(
     totals = row[OrdersTable.totals],
     idempotencyKey = row[OrdersTable.idempotencyKey],
     checkedOutAt = row[OrdersTable.checkedOutAt],
+    currency = row[OrdersTable.currency],
     status = OrderStatus.valueOf(row[OrdersTable.status]),
     payments = row[OrdersTable.payments],
     refunds = row[OrdersTable.refunds]
@@ -116,7 +117,13 @@ class OrderService(
     private val eventListener: OrderEventListener? = null
 ) {
 
-    fun createOrder(cart: Cart, totals: CartTotals, idempotencyKey: String, checkedOutAt: Instant = nowProvider()): Order {
+    fun createOrder(
+        cart: Cart,
+        totals: CartTotals,
+        idempotencyKey: String,
+        checkedOutAt: Instant = nowProvider(),
+        currency: String = "USD"
+    ): Order {
         val order = Order(
             cartId = cart.id,
             storeId = cart.storeId,
@@ -126,6 +133,7 @@ class OrderService(
             totals = totals,
             idempotencyKey = idempotencyKey,
             checkedOutAt = checkedOutAt,
+            currency = currency,
             status = OrderStatus.PENDING
         )
         transaction {
@@ -363,6 +371,7 @@ class OrderService(
             it[totals] = order.totals
             it[idempotencyKey] = order.idempotencyKey
             it[checkedOutAt] = order.checkedOutAt
+            it[currency] = order.currency
             it[status] = order.status.name
             it[payments] = order.payments
             it[refunds] = order.refunds

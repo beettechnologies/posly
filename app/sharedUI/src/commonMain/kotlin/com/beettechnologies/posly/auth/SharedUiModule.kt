@@ -34,7 +34,7 @@ val sharedUiModule: Module = module {
     viewModel { PairingViewModel(get(), get()) }
     viewModel { DevicePairingAdminViewModel(get(), get()) }
     viewModel { DeviceListViewModel(get(), get()) }
-    viewModel { SaleViewModel(get(), get(), get(), get()) }
+    viewModel { SaleViewModel(get(), get(), get(), get(), get()) }
     viewModel { ProductDetailViewModel(get(), get()) }
     viewModel { PaymentViewModel(get(), get()) }
     viewModel { ReceiptViewModel(get()) }

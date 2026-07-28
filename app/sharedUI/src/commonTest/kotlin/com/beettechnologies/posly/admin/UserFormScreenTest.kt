@@ -38,6 +38,7 @@ class UserFormScreenTest {
             override suspend fun getStore(id: String) = error("unused")
             override suspend fun updateStore(id: String, request: com.beettechnologies.posly.stores.UpdateStoreRequest) = error("unused")
             override suspend fun deleteStore(id: String) = error("unused")
+            override suspend fun uploadLogo(storeId: String, fileName: String, bytes: ByteArray) = error("unused")
         })
 
         setContent { UserFormScreen(userId = null, onDone = {}, onBack = {}, viewModel = viewModel) }
@@ -62,6 +63,7 @@ class UserFormScreenTest {
             override suspend fun getStore(id: String) = error("unused")
             override suspend fun updateStore(id: String, request: com.beettechnologies.posly.stores.UpdateStoreRequest) = error("unused")
             override suspend fun deleteStore(id: String) = error("unused")
+            override suspend fun uploadLogo(storeId: String, fileName: String, bytes: ByteArray) = error("unused")
         })
 
         setContent { UserFormScreen(userId = "u1", onDone = {}, onBack = {}, viewModel = viewModel) }

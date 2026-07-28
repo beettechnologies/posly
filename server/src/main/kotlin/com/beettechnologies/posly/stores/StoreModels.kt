@@ -20,9 +20,16 @@ data class Store(
     val address: Address,
     val timezone: String,
     val currency: String,
+    val locale: String = "en-US",
     val taxProfileId: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
+)
+
+/** A store's uploaded branding image, stored as a raw blob (mirrors [com.beettechnologies.posly.products.ProductService]'s image storage) - one row per store, replaced (not appended to) on re-upload. */
+data class StoreLogo(
+    val fileName: String,
+    val bytes: ByteArray
 )
 
 enum class PricingMode { INCLUSIVE, EXCLUSIVE }

@@ -10,7 +10,7 @@ import io.ktor.client.engine.cio.CIO
 import org.koin.core.module.Module
 import org.koin.dsl.module
 
-actual val defaultBaseUrl: String = "http://10.0.2.2:8080"
+actual val defaultBaseUrl: String = "http://192.168.0.135:8080"
 
 actual fun platformAuthModule(): Module = module {
     single<Settings> {

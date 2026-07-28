@@ -44,6 +44,7 @@ data class OrderResponse(
     val totals: CartTotalsResponse,
     val idempotencyKey: String,
     val checkedOutAt: String,
+    val currency: String = "USD",
     val status: String,
     val payments: List<PaymentRecordResponse> = emptyList(),
     val amountPaid: Double = 0.0,

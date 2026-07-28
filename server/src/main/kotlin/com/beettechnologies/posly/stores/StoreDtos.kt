@@ -18,7 +18,8 @@ data class CreateStoreRequest(
     val address: AddressDto,
     val timezone: String,
     val currency: String,
-    val taxProfileId: String? = null
+    val taxProfileId: String? = null,
+    val locale: String = "en-US"
 )
 
 @Serializable
@@ -27,7 +28,8 @@ data class UpdateStoreRequest(
     val address: AddressDto? = null,
     val timezone: String? = null,
     val currency: String? = null,
-    val taxProfileId: String? = null
+    val taxProfileId: String? = null,
+    val locale: String? = null
 )
 
 @Serializable
@@ -37,7 +39,10 @@ data class StoreResponse(
     val address: AddressDto,
     val timezone: String,
     val currency: String,
+    val locale: String,
     val taxProfileId: String? = null,
+    /** Always present - the client should treat a 404 from this URL as "no logo uploaded yet." */
+    val logoUrl: String,
     val createdAt: Long,
     val updatedAt: Long
 )
@@ -55,7 +60,12 @@ fun Store.toResponse() = StoreResponse(
     ),
     timezone = timezone,
     currency = currency,
+    locale = locale,
     taxProfileId = taxProfileId,
+    logoUrl = "/stores/$id/logo",
     createdAt = createdAt,
     updatedAt = updatedAt
 )
+
+@Serializable
+data class LogoUploadResponse(val logoUrl: String)

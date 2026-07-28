@@ -1,6 +1,7 @@
 package com.beettechnologies.posly.finance
 
 import com.beettechnologies.posly.cart.Order
+import com.beettechnologies.posly.format.CurrencyFormat
 import com.beettechnologies.posly.shifts.Shift
 import com.beettechnologies.posly.shifts.ShiftVarianceCause
 import com.beettechnologies.posly.shifts.ShiftVarianceEngine
@@ -27,7 +28,7 @@ import java.time.format.DateTimeFormatter
  */
 object FinanceReportBuilder {
 
-    fun buildTaxTable(orders: List<Order>): ReportTable {
+    fun buildTaxTable(orders: List<Order>, currency: String = "USD", localeTag: String = "en-US"): ReportTable {
         data class RateKey(val name: String, val ratePercent: Double)
         val byRate = linkedMapOf<RateKey, MutableList<Double>>()
         orders.forEach { order ->
@@ -38,16 +39,16 @@ object FinanceReportBuilder {
         }
         val rows = byRate.entries
             .sortedBy { it.key.name }
-            .map { (key, amounts) -> listOf(key.name, "${key.ratePercent}%", amounts.size.toString(), money(amounts.sum())) }
+            .map { (key, amounts) -> listOf(key.name, "${key.ratePercent}%", amounts.size.toString(), money(amounts.sum(), currency, localeTag)) }
         val totalTax = byRate.values.sumOf { it.sum() }
         return ReportTable(
             title = "Tax Report",
             headers = listOf("Tax Rate", "Rate %", "Orders", "Tax Collected"),
-            rows = rows + listOf(listOf("TOTAL", "", orders.size.toString(), money(totalTax)))
+            rows = rows + listOf(listOf("TOTAL", "", orders.size.toString(), money(totalTax, currency, localeTag)))
         )
     }
 
-    fun buildSalesTable(orders: List<Order>, timezone: String): ReportTable {
+    fun buildSalesTable(orders: List<Order>, timezone: String, currency: String = "USD", localeTag: String = "en-US"): ReportTable {
         val byDay = orders.groupBy { StoreTimeZone.toLocalDate(it.checkedOutAt, timezone) }
         val rows = byDay.entries
             .sortedBy { it.key }
@@ -56,22 +57,22 @@ object FinanceReportBuilder {
                     date.toString(),
                     dayOrders.size.toString(),
                     dayOrders.sumOf { order -> order.items.sumOf { it.quantity } }.toString(),
-                    money(dayOrders.sumOf { it.totals.subtotal }),
-                    money(dayOrders.sumOf { it.totals.itemDiscountTotal + it.totals.cartDiscountAmount }),
-                    money(dayOrders.sumOf { it.totals.totalTax }),
-                    money(dayOrders.sumOf { it.amountRefunded }),
-                    money(dayOrders.sumOf { it.totals.total })
+                    money(dayOrders.sumOf { it.totals.subtotal }, currency, localeTag),
+                    money(dayOrders.sumOf { it.totals.itemDiscountTotal + it.totals.cartDiscountAmount }, currency, localeTag),
+                    money(dayOrders.sumOf { it.totals.totalTax }, currency, localeTag),
+                    money(dayOrders.sumOf { it.amountRefunded }, currency, localeTag),
+                    money(dayOrders.sumOf { it.totals.total }, currency, localeTag)
                 )
             }
         val totalRow = listOf(
             "TOTAL",
             orders.size.toString(),
             orders.sumOf { order -> order.items.sumOf { it.quantity } }.toString(),
-            money(orders.sumOf { it.totals.subtotal }),
-            money(orders.sumOf { it.totals.itemDiscountTotal + it.totals.cartDiscountAmount }),
-            money(orders.sumOf { it.totals.totalTax }),
-            money(orders.sumOf { it.amountRefunded }),
-            money(orders.sumOf { it.totals.total })
+            money(orders.sumOf { it.totals.subtotal }, currency, localeTag),
+            money(orders.sumOf { it.totals.itemDiscountTotal + it.totals.cartDiscountAmount }, currency, localeTag),
+            money(orders.sumOf { it.totals.totalTax }, currency, localeTag),
+            money(orders.sumOf { it.amountRefunded }, currency, localeTag),
+            money(orders.sumOf { it.totals.total }, currency, localeTag)
         )
         return ReportTable(
             title = "Sales Report",
@@ -80,7 +81,7 @@ object FinanceReportBuilder {
         )
     }
 
-    fun buildReconciliationTable(shifts: List<Shift>, timezone: String): ReportTable {
+    fun buildReconciliationTable(shifts: List<Shift>, timezone: String, currency: String = "USD", localeTag: String = "en-US"): ReportTable {
         val zone = ZoneId.of(timezone)
         val formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(zone)
         val rows = shifts.sortedBy { it.closedAt }.map { shift ->
@@ -90,10 +91,10 @@ object FinanceReportBuilder {
                 shift.cashierId ?: "-",
                 formatter.format(shift.openedAt),
                 shift.closedAt?.let { formatter.format(it) } ?: "-",
-                money(shift.openingFloat),
-                shift.closingCount?.let { money(it) } ?: "-",
-                shift.expectedCash?.let { money(it) } ?: "-",
-                money(variance),
+                money(shift.openingFloat, currency, localeTag),
+                shift.closingCount?.let { money(it, currency, localeTag) } ?: "-",
+                shift.expectedCash?.let { money(it, currency, localeTag) } ?: "-",
+                money(variance, currency, localeTag),
                 ShiftVarianceEngine.causeFor(variance).name
             )
         }
@@ -102,7 +103,7 @@ object FinanceReportBuilder {
         val shortageCount = shifts.count { ShiftVarianceEngine.causeFor(it.variance ?: 0.0) == ShiftVarianceCause.SHORT }
         val totalRow = listOf(
             "TOTAL (${shifts.size} shifts)", "", "", "", "", "", "",
-            money(totalVariance), "$overageCount over / $shortageCount short"
+            money(totalVariance, currency, localeTag), "$overageCount over / $shortageCount short"
         )
         return ReportTable(
             title = "Reconciliation Report",
@@ -176,5 +177,6 @@ object FinanceReportBuilder {
         }
     }
 
-    private fun money(amount: Double): String = String.format("%.2f", amount)
+    private fun money(amount: Double, currency: String = "USD", localeTag: String = "en-US"): String =
+        CurrencyFormat.format(amount, currency, localeTag)
 }

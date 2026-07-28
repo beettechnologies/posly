@@ -7,6 +7,8 @@ import com.beettechnologies.posly.module
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.*
+import io.ktor.client.request.forms.*
+import io.ktor.client.statement.bodyAsBytes
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.json
@@ -14,7 +16,17 @@ import io.ktor.server.config.MapApplicationConfig
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
 import kotlinx.serialization.json.*
+import java.awt.image.BufferedImage
+import java.io.ByteArrayOutputStream
+import javax.imageio.ImageIO
 import kotlin.test.*
+
+private fun pngBytes(): ByteArray {
+    val image = BufferedImage(4, 4, BufferedImage.TYPE_INT_RGB)
+    val output = ByteArrayOutputStream()
+    ImageIO.write(image, "png", output)
+    return output.toByteArray()
+}
 
 class StoreRoutesTest {
 
@@ -182,6 +194,148 @@ class StoreRoutesTest {
             header(HttpHeaders.Authorization, "Bearer $token")
         }
         assertEquals(HttpStatusCode.NotFound, afterDeleteResp.status)
+    }
+
+    @Test
+    fun `create store defaults locale to en-US and accepts a custom locale on update`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val token = adminToken(client)
+
+        val createResp = client.post("/stores") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+            contentType(ContentType.Application.Json)
+            setBody(validStoreBody)
+        }
+        val createdBody = Json.parseToJsonElement(createResp.bodyAsText()).jsonObject
+        assertEquals("en-US", createdBody["locale"]?.jsonPrimitive?.content)
+        assertTrue(createdBody["logoUrl"]!!.jsonPrimitive.content.endsWith("/logo"))
+        val id = createdBody["id"]!!.jsonPrimitive.content
+
+        val updateResp = client.put("/stores/$id") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+            contentType(ContentType.Application.Json)
+            setBody("""{"locale":"de-DE"}""")
+        }
+        assertEquals(HttpStatusCode.OK, updateResp.status)
+        val updatedBody = Json.parseToJsonElement(updateResp.bodyAsText()).jsonObject
+        assertEquals("de-DE", updatedBody["locale"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `an invalid locale tag returns 400 on create and update`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val token = adminToken(client)
+
+        val createResp = client.post("/stores") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+            contentType(ContentType.Application.Json)
+            setBody(
+                """{"name":"Bad","address":{"line1":"1 Main St","city":"NY","postalCode":"10001","country":"US"},
+                    |"timezone":"America/New_York","currency":"USD","locale":"   "}""".trimMargin()
+            )
+        }
+        assertEquals(HttpStatusCode.BadRequest, createResp.status)
+
+        val validResp = client.post("/stores") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+            contentType(ContentType.Application.Json)
+            setBody(validStoreBody)
+        }
+        val id = Json.parseToJsonElement(validResp.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
+
+        val updateResp = client.put("/stores/$id") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+            contentType(ContentType.Application.Json)
+            setBody("""{"locale":"!!!"}""")
+        }
+        assertEquals(HttpStatusCode.BadRequest, updateResp.status)
+    }
+
+    @Test
+    fun `uploading and fetching a store logo roundtrips the bytes, admin-only`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val token = adminToken(client)
+        val createResp = client.post("/stores") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+            contentType(ContentType.Application.Json)
+            setBody(validStoreBody)
+        }
+        val id = Json.parseToJsonElement(createResp.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
+
+        val notFoundResp = client.get("/stores/$id/logo") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+        }
+        assertEquals(HttpStatusCode.NotFound, notFoundResp.status)
+
+        val logoBytes = pngBytes()
+        val uploadResp = client.post("/stores/$id/logo") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+            setBody(
+                MultiPartFormDataContent(
+                    formData {
+                        append("file", logoBytes, Headers.build {
+                            append(HttpHeaders.ContentDisposition, "filename=\"logo.png\"")
+                            append(HttpHeaders.ContentType, "image/png")
+                        })
+                    }
+                )
+            )
+        }
+        assertEquals(HttpStatusCode.Created, uploadResp.status)
+        val logoUrl = Json.parseToJsonElement(uploadResp.bodyAsText()).jsonObject["logoUrl"]?.jsonPrimitive?.content
+        assertEquals("/stores/$id/logo", logoUrl)
+
+        val getResp = client.get("/stores/$id/logo") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+        }
+        assertEquals(HttpStatusCode.OK, getResp.status)
+        assertEquals(ContentType.Image.PNG, getResp.contentType()?.withoutParameters())
+        assertTrue(logoBytes.contentEquals(getResp.bodyAsBytes()))
+    }
+
+    @Test
+    fun `an invalid image upload returns 400 and a manager cannot upload a logo`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val token = adminToken(client)
+        val createResp = client.post("/stores") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+            contentType(ContentType.Application.Json)
+            setBody(validStoreBody)
+        }
+        val id = Json.parseToJsonElement(createResp.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
+
+        val invalidResp = client.post("/stores/$id/logo") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+            setBody(
+                MultiPartFormDataContent(
+                    formData {
+                        append("file", "not an image".toByteArray(), Headers.build {
+                            append(HttpHeaders.ContentDisposition, "filename=\"notanimage.txt\"")
+                        })
+                    }
+                )
+            )
+        }
+        assertEquals(HttpStatusCode.BadRequest, invalidResp.status)
+
+        val managerAuth = managerToken(client)
+        val forbiddenResp = client.post("/stores/$id/logo") {
+            header(HttpHeaders.Authorization, "Bearer $managerAuth")
+            setBody(
+                MultiPartFormDataContent(
+                    formData {
+                        append("file", pngBytes(), Headers.build {
+                            append(HttpHeaders.ContentDisposition, "filename=\"logo.png\"")
+                        })
+                    }
+                )
+            )
+        }
+        assertEquals(HttpStatusCode.Forbidden, forbiddenResp.status)
     }
 
     @Test
