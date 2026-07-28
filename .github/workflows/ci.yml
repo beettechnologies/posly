@@ -32,6 +32,11 @@ jobs:
       - name: Run ktlint
         run: ./gradlew ktlintCheck --no-daemon --continue
 
+      - name: Validate OpenAPI spec
+        run: |
+          pip install --quiet openapi-spec-validator
+          python3 -m openapi_spec_validator openapi.yaml
+
       - name: Run server tests
         run: ./gradlew :server:test --no-daemon
 

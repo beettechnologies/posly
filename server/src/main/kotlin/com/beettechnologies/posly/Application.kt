@@ -23,6 +23,7 @@ import com.beettechnologies.posly.cart.configureOrderRoutes
 import com.beettechnologies.posly.capacity.HeavyAnalyticsRateLimit
 import com.beettechnologies.posly.catalog.ProductImportService
 import com.beettechnologies.posly.catalog.configureProductImportRoutes
+import com.beettechnologies.posly.docs.configureDocsRoutes
 import com.beettechnologies.posly.migration.SalesImportService
 import com.beettechnologies.posly.migration.configureSalesImportRoutes
 import com.beettechnologies.posly.db.DatabaseFactory
@@ -246,6 +247,7 @@ fun Application.module() {
         }
     }
 
+    configureDocsRoutes()
     configureAuthRoutes(authService)
     configureUserRoutes(authService, userService, ssoConfigService)
     configureDeviceRoutes(deviceRegistryService)

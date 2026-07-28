@@ -1,0 +1,3128 @@
+openapi: 3.0.3
+info:
+  title: Posly API
+  version: "1.0.0"
+  description: |
+    HTTP API for the Posly point-of-sale backend (Ktor/Exposed/PostgreSQL).
+
+    This spec is **hand-authored** against the actual route/DTO definitions under
+    `server/src/main/kotlin/com/beettechnologies/posly/` (not generated from code annotations),
+    covering all 27 route groups. Fully worked request/response examples are provided for the
+    highest-traffic flows (auth, cart/checkout, payments/refunds, product/store creation, sales
+    reporting, historical sales import, API keys); the remaining endpoints have complete,
+    accurate request/response schemas but no worked examples.
+
+    ## Authentication
+
+    Two schemes, both sent as `Authorization: Bearer <value>`, and interchangeable on any route
+    that documents both:
+    - **User JWT** — obtained from `POST /auth/login` (or `/auth/mfa/verify` / `/auth/sso/callback`).
+      Carries the user's roles; most routes gate on one or more of `ADMIN`, `MANAGER`, `CASHIER`,
+      `MERCHANDISER`.
+    - **API key** — format `posly_<key-id>-<secret>`, obtained from `POST /api-keys` (ADMIN only).
+      Carries a narrow set of read-only scopes (`ORDERS_READ`, `PRODUCTS_READ`, `REPORTS_READ`) and
+      can only be used on the small subset of routes that explicitly document `apiKeyAuth` below —
+      never on write endpoints, and never on the two heavy-analytics pipeline endpoints regardless
+      of scope. See `API_KEYS.md` for the full scope table.
+
+    A handful of routes are intentionally unauthenticated by design (not an oversight): device
+    pairing/heartbeat (`POST /devices/enroll`, `POST /devices/heartbeat`), offline-sale batch
+    ingestion (`POST /sync/offline-sales`, authenticated instead via device client credentials in
+    the body), the payment gateway webhook (`POST /payments/webhook`, verified via an HMAC
+    signature header instead), and the invite/SSO-callback endpoints where the caller has no token
+    yet (`POST /users/accept-invite`, `POST /auth/sso/callback`).
+  contact:
+    name: Posly Engineering
+servers:
+  - url: http://localhost:8080
+    description: Local development server (./gradlew :server:run)
+security:
+  - bearerAuth: []
+tags:
+  - name: Auth
+    description: Login, refresh, logout, MFA, SSO callback
+  - name: Users
+    description: User invitation, roles, status, SSO configuration
+  - name: Devices
+    description: POS terminal pairing, enrollment, heartbeat
+  - name: API Keys
+    description: 3rd-party integration credentials
+  - name: Secrets
+    description: JWT signing key / webhook secret rotation
+  - name: Feature Flags
+    description: Rollout flags with per-store gating
+  - name: Audit
+    description: Global audit-log query and retention
+  - name: Webhooks
+    description: Outbound webhook subscriptions and delivery tracking
+  - name: Tax Profiles
+    description: Tax profile CRUD
+  - name: Products
+    description: Product catalog CRUD
+  - name: Product Import
+    description: Bulk CSV product catalog import
+  - name: Sales Import
+    description: Historical sales/order CSV import and reconciliation
+  - name: Search
+    description: Product search (JWT or API key)
+  - name: Stores
+    description: Store CRUD, branding logo
+  - name: Tax
+    description: Tax calculation
+  - name: Inventory
+    description: Stock levels, adjustments, reservations
+  - name: Stock Counts
+    description: Physical stock count / variance reconciliation
+  - name: Shifts
+    description: Cashier shift open/close, cash reconciliation
+  - name: Carts
+    description: Shopping cart lifecycle and checkout
+  - name: Orders
+    description: Order query, payment confirmation, refunds (JWT or API key for reads)
+  - name: Payments
+    description: Card payment gateway integration and webhook
+  - name: Sync
+    description: Offline sale batch ingestion and conflict review
+  - name: Printing
+    description: Printer registration and receipt print jobs
+  - name: Email
+    description: Emailed receipts
+  - name: Reporting
+    description: Sales/inventory/staff aggregates and the analytics pipeline (JWT or API key for reads)
+  - name: Finance Reports
+    description: Scheduled/on-demand finance report generation and delivery
+  - name: Backups
+    description: Database backup and restore drills
+paths:
+  # ============================================================
+  # Auth
+  # ============================================================
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Authenticate with username/password
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+            example: { username: "cashier", password: "cashier123" }
+      responses:
+        '200':
+          description: Tokens issued, or MFA required
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LoginResponse' }
+              examples:
+                success:
+                  value: { accessToken: "eyJraWQi...", refreshToken: "eyJraWQi..." }
+                mfaRequired:
+                  value: { mfaRequired: true, mfaToken: "eyJraWQi..." }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Exchange a refresh token for a new access token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefreshRequest' }
+      responses:
+        '200':
+          description: New access token issued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RefreshResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Revoke a refresh token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LogoutRequest' }
+      responses:
+        '204': { description: Logged out }
+  /auth/mfa/verify:
+    post:
+      tags: [Auth]
+      summary: Complete login by verifying an MFA code
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MfaVerifyRequest' }
+            example: { mfaToken: "eyJraWQi...", code: "123456" }
+      responses:
+        '200':
+          description: Tokens issued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MfaVerifyResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /auth/sso/callback:
+    post:
+      tags: [Auth]
+      summary: Complete an SSO login / JIT-provisioning flow
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SsoCallbackRequest' }
+      responses:
+        '200':
+          description: Tokens issued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SsoLoginResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: "No role mapped for this SSO assertion", content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '503': { description: "SSO not configured or disabled", content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /protected/me:
+    get:
+      tags: [Auth]
+      summary: Returns the caller's own identity/roles from the JWT
+      responses:
+        '200':
+          description: Caller identity
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MeResponse' }
+
+  # ============================================================
+  # Users
+  # ============================================================
+  /users:
+    get:
+      tags: [Users]
+      summary: List all users (ADMIN)
+      responses:
+        '200':
+          description: Users
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/UserResponse' } }
+  /users/invite:
+    post:
+      tags: [Users]
+      summary: Invite a new user (ADMIN)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InviteUserRequest' }
+      responses:
+        '201':
+          description: User invited
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InviteUserResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /users/accept-invite:
+    post:
+      tags: [Users]
+      summary: Redeem an invite token and set the new user's password
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AcceptInviteRequest' }
+      responses:
+        '204': { description: Password set }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /users/audit-log:
+    get:
+      tags: [Users]
+      summary: Query the auth-related audit log (ADMIN)
+      parameters:
+        - { name: username, in: query, schema: { type: string } }
+        - { name: event, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: Audit entries
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/AuditLogEntryResponse' } }
+  /users/sso/configure:
+    post:
+      tags: [Users]
+      summary: Configure the SSO role-mapping rules (ADMIN)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SsoConfigureRequest' }
+      responses:
+        '200':
+          description: SSO configuration saved
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SsoConfigurationResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /users/sso/configuration:
+    get:
+      tags: [Users]
+      summary: Fetch the current SSO configuration (ADMIN)
+      responses:
+        '200':
+          description: SSO configuration
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SsoConfigurationResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /users/{id}:
+    get:
+      tags: [Users]
+      summary: Fetch a single user (ADMIN)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      responses:
+        '200': { description: User, content: { application/json: { schema: { $ref: '#/components/schemas/UserResponse' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /users/{id}/roles:
+    patch:
+      tags: [Users]
+      summary: Change a user's assigned roles (ADMIN)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateRolesRequest' }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/UserResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /users/{id}/store-access:
+    patch:
+      tags: [Users]
+      summary: Change which stores a user can access (ADMIN)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateStoreAccessRequest' }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/UserResponse' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /users/{id}/status:
+    patch:
+      tags: [Users]
+      summary: Change a user's status, e.g. disable an account (ADMIN)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateStatusRequest' }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/UserResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ============================================================
+  # Devices
+  # ============================================================
+  /devices:
+    get:
+      tags: [Devices]
+      summary: List registered devices (ADMIN/MANAGER)
+      parameters:
+        - { name: storeId, in: query, schema: { type: string } }
+      responses:
+        '200': { description: Devices, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/DeviceResponse' } } } } }
+  /devices/create-pair-code:
+    post:
+      tags: [Devices]
+      summary: Generate a device pairing code for a store (ADMIN/MANAGER)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePairCodeRequest' }
+      responses:
+        '201': { description: Pair code created, content: { application/json: { schema: { $ref: '#/components/schemas/PairCodeResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /devices/validate-pair-code:
+    post:
+      tags: [Devices]
+      summary: Validate a pairing code without consuming it (ADMIN/MANAGER)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ValidatePairCodeRequest' }
+      responses:
+        '200': { description: Validation result, content: { application/json: { schema: { $ref: '#/components/schemas/ValidatePairCodeResponse' } } } }
+  /devices/revoke-pair-code:
+    post:
+      tags: [Devices]
+      summary: Revoke an outstanding pairing code (ADMIN/MANAGER)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RevokePairCodeRequest' }
+      responses:
+        '200': { description: Revoked }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /devices/enroll:
+    post:
+      tags: [Devices]
+      summary: Redeem a pairing code to enroll a new device
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EnrollDeviceRequest' }
+      responses:
+        '200': { description: Device enrolled, content: { application/json: { schema: { $ref: '#/components/schemas/EnrollDeviceResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /devices/heartbeat:
+    post:
+      tags: [Devices]
+      summary: Record a device liveness heartbeat
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HeartbeatRequest' }
+      responses:
+        '200': { description: Heartbeat recorded, content: { application/json: { schema: { $ref: '#/components/schemas/HeartbeatResponse' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Deprovisioned, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+  /devices/{id}:
+    get:
+      tags: [Devices]
+      summary: Fetch a single device (ADMIN/MANAGER)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      responses:
+        '200': { description: Device, content: { application/json: { schema: { $ref: '#/components/schemas/DeviceResponse' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /devices/{id}/deprovision:
+    post:
+      tags: [Devices]
+      summary: Deprovision (revoke) a device (ADMIN/MANAGER)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      responses:
+        '200': { description: Deprovisioned, content: { application/json: { schema: { $ref: '#/components/schemas/DeviceResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ============================================================
+  # API Keys
+  # ============================================================
+  /api-keys:
+    post:
+      tags: [API Keys]
+      summary: Create a new API key (ADMIN)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateApiKeyRequest' }
+            example: { name: "Accounting integration", scopes: ["ORDERS_READ"] }
+      responses:
+        '201':
+          description: Key created - the raw secret is shown exactly once
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiKeyCreatedResponse' }
+              example:
+                apiKey: { id: "key-1", name: "Accounting integration", keyPrefix: "a1b2c3d4", scopes: ["ORDERS_READ"], status: "ACTIVE", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" }
+                rawKey: "posly_key-1-s3cr3tvalue"
+        '400': { $ref: '#/components/responses/BadRequest' }
+    get:
+      tags: [API Keys]
+      summary: List all API keys, without raw secrets (ADMIN)
+      responses:
+        '200': { description: Keys, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ApiKeyResponse' } } } } }
+  /api-keys/{id}/revoke:
+    post:
+      tags: [API Keys]
+      summary: Revoke an API key, effective immediately (ADMIN)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      responses:
+        '200': { description: Revoked, content: { application/json: { schema: { $ref: '#/components/schemas/ApiKeyResponse' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api-keys/{id}/rotate:
+    post:
+      tags: [API Keys]
+      summary: Rotate an API key - old secret stops working immediately (ADMIN)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      responses:
+        '200': { description: Rotated - the new raw secret is shown exactly once, content: { application/json: { schema: { $ref: '#/components/schemas/ApiKeyCreatedResponse' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /api-keys/{id}/usage:
+    get:
+      tags: [API Keys]
+      summary: List recent usage records for an API key (ADMIN)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      responses:
+        '200': { description: Usage log, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ApiKeyUsageResponse' } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ============================================================
+  # Secrets
+  # ============================================================
+  /ops/secrets:
+    get:
+      tags: [Secrets]
+      summary: List managed secrets with current/historical versions (ADMIN)
+      responses:
+        '200': { description: Secrets, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/SecretSummaryResponse' } } } } }
+  /ops/secrets/{name}/rotate:
+    post:
+      tags: [Secrets]
+      summary: Rotate a secret to a new version (ADMIN)
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string, enum: [jwt-signing-key, payment-webhook-secret] }
+      responses:
+        '200': { description: Rotated - new plaintext value shown once, content: { application/json: { schema: { $ref: '#/components/schemas/SecretRotationResponse' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ============================================================
+  # Feature Flags
+  # ============================================================
+  /feature-flags:
+    post:
+      tags: [Feature Flags]
+      summary: Create a new feature flag (ADMIN)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateFeatureFlagRequest' }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/FeatureFlagResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    get:
+      tags: [Feature Flags]
+      summary: List all feature flags (ADMIN)
+      responses:
+        '200': { description: Flags, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/FeatureFlagResponse' } } } } }
+  /feature-flags/audit-log:
+    get:
+      tags: [Feature Flags]
+      summary: Query feature-flag audit-log entries (ADMIN)
+      parameters:
+        - { name: event, in: query, schema: { type: string } }
+      responses:
+        '200': { description: Audit entries, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AuditLogEntryResponse' } } } } }
+  /feature-flags/{key}:
+    patch:
+      tags: [Feature Flags]
+      summary: Update a flag's enabled state / rollout / store allowlist (ADMIN)
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateFeatureFlagRequest' }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/FeatureFlagResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /feature-flags/{key}/evaluate:
+    get:
+      tags: [Feature Flags]
+      summary: Evaluate whether a flag is enabled for a store (any authenticated role)
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema: { type: string }
+        - name: storeId
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Evaluation result, content: { application/json: { schema: { $ref: '#/components/schemas/FlagEvaluationResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  # ============================================================
+  # Audit
+  # ============================================================
+  /ops/audit-log:
+    get:
+      tags: [Audit]
+      summary: Query the global audit log (ADMIN)
+      parameters:
+        - { name: username, in: query, schema: { type: string } }
+        - { name: event, in: query, schema: { type: string } }
+        - { name: correlationId, in: query, schema: { type: string } }
+      responses:
+        '200': { description: Audit entries, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/AuditLogEntryResponse' } } } } }
+  /ops/audit/retention/run-now:
+    post:
+      tags: [Audit]
+      summary: Trigger an immediate audit-log retention/purge run (ADMIN)
+      responses:
+        '200': { description: Retention run result, content: { application/json: { schema: { $ref: '#/components/schemas/AuditRetentionResultResponse' } } } }
+
+  # ============================================================
+  # Webhooks
+  # ============================================================
+  /webhooks/subscriptions:
+    post:
+      tags: [Webhooks]
+      summary: Register a new webhook subscription (ADMIN/MANAGER)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterWebhookRequest' }
+      responses:
+        '201': { description: Registered, content: { application/json: { schema: { $ref: '#/components/schemas/WebhookSubscriptionResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+    get:
+      tags: [Webhooks]
+      summary: List all webhook subscriptions (ADMIN/MANAGER)
+      responses:
+        '200': { description: Subscriptions, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/WebhookSubscriptionResponse' } } } } }
+  /webhooks/subscriptions/{id}:
+    get:
+      tags: [Webhooks]
+      summary: Fetch a single webhook subscription (ADMIN/MANAGER)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      responses:
+        '200': { description: Subscription, content: { application/json: { schema: { $ref: '#/components/schemas/WebhookSubscriptionResponse' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /webhooks/deliveries:
+    get:
+      tags: [Webhooks]
+      summary: List webhook delivery attempts (ADMIN/MANAGER)
+      parameters:
+        - { name: subscriptionId, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string } }
+      responses:
+        '200': { description: Deliveries, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/WebhookDeliveryResponse' } } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /webhooks/deliveries/dead-letter:
+    get:
+      tags: [Webhooks]
+      summary: List deliveries that exhausted retries (ADMIN/MANAGER)
+      responses:
+        '200': { description: Dead-lettered deliveries, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/WebhookDeliveryResponse' } } } } }
+
+  # ============================================================
+  # Tax Profiles
+  # ============================================================
+  /tax-profiles:
+    post:
+      tags: [Tax Profiles]
+      summary: Create a tax profile with rate lines (ADMIN)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateTaxProfileRequest' }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/TaxProfileResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+    get:
+      tags: [Tax Profiles]
+      summary: List all tax profiles (ADMIN)
+      responses:
+        '200': { description: Tax profiles, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/TaxProfileResponse' } } } } }
+  /tax-profiles/{id}:
+    get:
+      tags: [Tax Profiles]
+      summary: Fetch a single tax profile (ADMIN)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      responses:
+        '200': { description: Tax profile, content: { application/json: { schema: { $ref: '#/components/schemas/TaxProfileResponse' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Tax Profiles]
+      summary: Update an existing tax profile, partial update (ADMIN)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateTaxProfileRequest' }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/TaxProfileResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Tax Profiles]
+      summary: Delete a tax profile (ADMIN)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /tax-profiles/{id}/calculate:
+    post:
+      tags: [Tax Profiles]
+      summary: Calculate tax for a single amount under this profile
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CalculateTaxRequest' }
+      responses:
+        '200': { description: Calculated, content: { application/json: { schema: { $ref: '#/components/schemas/CalculateTaxResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ============================================================
+  # Products
+  # ============================================================
+  /products:
+    post:
+      tags: [Products]
+      summary: Create a new product (ADMIN/MANAGER/MERCHANDISER)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateProductRequest' }
+            example: { sku: "SKU-1001", name: "Espresso", price: 3.5, taxCategory: "STANDARD", category: "Beverages" }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CreateProductResponse' }
+              example: { id: "9f2b7e3a-1234-4c56-8d90-abcdef123456" }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    get:
+      tags: [Products]
+      summary: List all products
+      responses:
+        '200':
+          description: Products
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/ProductResponse' } }
+  /products/{id}:
+    get:
+      tags: [Products]
+      summary: Get a single product
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      responses:
+        '200': { description: Product, content: { application/json: { schema: { $ref: '#/components/schemas/ProductResponse' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Products]
+      summary: Update a product, partial update (ADMIN/MANAGER/MERCHANDISER)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateProductRequest' }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/ProductResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Products]
+      summary: Delete a product (ADMIN/MANAGER)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /products/{id}/images:
+    post:
+      tags: [Products]
+      summary: Upload a product image (ADMIN/MANAGER/MERCHANDISER)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { type: object, properties: { file: { type: string, format: binary } } }
+      responses:
+        '201': { description: Uploaded, content: { application/json: { schema: { $ref: '#/components/schemas/ImageUploadResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ============================================================
+  # Product Import
+  # ============================================================
+  /products/import/upload:
+    post:
+      tags: [Product Import]
+      summary: Upload a CSV file staged for product import (ADMIN/MANAGER/MERCHANDISER)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { type: object, properties: { file: { type: string, format: binary } } }
+      responses:
+        '201': { description: Uploaded, content: { application/json: { schema: { $ref: '#/components/schemas/UploadCsvResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /products/import/{fileId}/dry-run:
+    post:
+      tags: [Product Import]
+      summary: Preview a product import without committing changes (ADMIN/MANAGER/MERCHANDISER)
+      parameters:
+        - name: fileId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ImportMappingRequest' }
+      responses:
+        '200': { description: Dry-run outcomes, content: { application/json: { schema: { $ref: '#/components/schemas/DryRunResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /products/import/{fileId}/start:
+    post:
+      tags: [Product Import]
+      summary: Start (execute) the product import job (ADMIN/MANAGER/MERCHANDISER)
+      parameters:
+        - name: fileId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ImportMappingRequest' }
+      responses:
+        '201': { description: Job started, content: { application/json: { schema: { $ref: '#/components/schemas/ImportJobResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /products/import/jobs/{jobId}:
+    get:
+      tags: [Product Import]
+      summary: Get the status/result of an import job (ADMIN/MANAGER/MERCHANDISER)
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Job, content: { application/json: { schema: { $ref: '#/components/schemas/ImportJobResponse' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /products/import/jobs/{jobId}/rollback:
+    post:
+      tags: [Product Import]
+      summary: Roll back a completed product import job (ADMIN/MANAGER)
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Rolled back, content: { application/json: { schema: { $ref: '#/components/schemas/ImportJobResponse' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  # ============================================================
+  # Sales Import
+  # ============================================================
+  /sales-import/upload:
+    post:
+      tags: [Sales Import]
+      summary: Upload a historical-sales CSV file staged for import (ADMIN/MANAGER)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { type: object, properties: { file: { type: string, format: binary } } }
+      responses:
+        '201':
+          description: Uploaded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UploadSalesCsvResponse' }
+              example:
+                fileId: "f1a2b3c4-0000-0000-0000-000000000001"
+                headers: ["orderRef", "storeId", "sku", "qty", "unitPrice", "soldAt", "paymentMethod", "total"]
+                previewRows: [["ORD-1", "store-1", "SKU-1", "1", "10.00", "2024-01-01T00:00:00Z", "CASH", "10.00"]]
+                totalRows: 1
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /sales-import/{fileId}/dry-run:
+    post:
+      tags: [Sales Import]
+      summary: Preview grouped historical orders and their import eligibility (ADMIN/MANAGER)
+      parameters:
+        - name: fileId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SalesImportMappingRequest' }
+            example:
+              mapping:
+                ORDER_REFERENCE: orderRef
+                STORE_ID: storeId
+                SKU: sku
+                QUANTITY: qty
+                UNIT_PRICE: unitPrice
+                SOLD_AT: soldAt
+                PAYMENT_METHOD: paymentMethod
+                TOTAL_AMOUNT: total
+      responses:
+        '200':
+          description: Dry-run report
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SalesDryRunResponse' }
+              example:
+                rowOutcomes: [ { rowNumber: 1, orderReference: "ORD-1", result: "MATCHED", sku: "SKU-1", errors: [] } ]
+                groups: [ { orderReference: "ORD-1", rowNumbers: [1], importable: true, itemCount: 1, total: 10.0, errors: [] } ]
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /sales-import/{fileId}/start:
+    post:
+      tags: [Sales Import]
+      summary: Start (execute) the historical sales import job (ADMIN/MANAGER)
+      parameters:
+        - name: fileId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SalesImportMappingRequest' }
+      responses:
+        '201': { description: Job started, content: { application/json: { schema: { $ref: '#/components/schemas/SalesImportJobResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /sales-import/jobs/{jobId}:
+    get:
+      tags: [Sales Import]
+      summary: Get the status/result of a sales import job (ADMIN/MANAGER)
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Job, content: { application/json: { schema: { $ref: '#/components/schemas/SalesImportJobResponse' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /sales-import/jobs/{jobId}/reconciliation:
+    get:
+      tags: [Sales Import]
+      summary: Fetch the reconciliation report for a completed import (ADMIN/MANAGER)
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Reconciliation report, content: { application/json: { schema: { $ref: '#/components/schemas/SalesReconciliationReportResponse' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /sales-import/jobs/{jobId}/rollback:
+    post:
+      tags: [Sales Import]
+      summary: Roll back a completed sales import job (ADMIN/MANAGER)
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Rolled back, content: { application/json: { schema: { $ref: '#/components/schemas/SalesImportJobResponse' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  # ============================================================
+  # Search
+  # ============================================================
+  /search:
+    get:
+      tags: [Search]
+      summary: Search/paginate products (JWT any role, or API key scope PRODUCTS_READ)
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - { name: q, in: query, schema: { type: string } }
+        - { name: barcode, in: query, schema: { type: string } }
+        - { name: category, in: query, schema: { type: string } }
+        - { name: in_stock, in: query, schema: { type: boolean } }
+        - { name: page, in: query, schema: { type: integer, default: 0 } }
+        - { name: size, in: query, schema: { type: integer, default: 20, maximum: 100 } }
+      responses:
+        '200': { description: Search results, content: { application/json: { schema: { $ref: '#/components/schemas/SearchResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  # ============================================================
+  # Stores
+  # ============================================================
+  /stores:
+    post:
+      tags: [Stores]
+      summary: Create a new store (ADMIN)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateStoreRequest' }
+            example:
+              name: "Downtown"
+              address: { line1: "1 Main St", city: "New York", postalCode: "10001", country: "US" }
+              timezone: "America/New_York"
+              currency: "USD"
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StoreResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+    get:
+      tags: [Stores]
+      summary: List all stores (ADMIN)
+      responses:
+        '200': { description: Stores, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/StoreResponse' } } } } }
+  /stores/{id}:
+    get:
+      tags: [Stores]
+      summary: Get a single store (ADMIN)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      responses:
+        '200': { description: Store, content: { application/json: { schema: { $ref: '#/components/schemas/StoreResponse' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Stores]
+      summary: Update a store, partial update (ADMIN)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateStoreRequest' }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/StoreResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Stores]
+      summary: Delete a store (ADMIN)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /stores/{id}/logo:
+    post:
+      tags: [Stores]
+      summary: Upload a store's branding logo (ADMIN)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { type: object, properties: { file: { type: string, format: binary } } }
+      responses:
+        '201': { description: Uploaded, content: { application/json: { schema: { $ref: '#/components/schemas/LogoUploadResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    get:
+      tags: [Stores]
+      summary: Fetch the raw store logo image bytes (ADMIN)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      responses:
+        '200': { description: Raw image bytes, content: { image/png: { schema: { type: string, format: binary } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ============================================================
+  # Tax
+  # ============================================================
+  /taxes/calculate:
+    post:
+      tags: [Tax]
+      summary: Calculate tax across a full set of order lines (ADMIN/MANAGER/CASHIER/MERCHANDISER)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TaxCalculateRequest' }
+      responses:
+        '200': { description: Calculated, content: { application/json: { schema: { $ref: '#/components/schemas/TaxCalculateResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ============================================================
+  # Inventory
+  # ============================================================
+  /inventory/adjustments:
+    post:
+      tags: [Inventory]
+      summary: Manually adjust on-hand stock (ADMIN/MANAGER)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AdjustStockRequest' }
+      responses:
+        '201': { description: Adjusted, content: { application/json: { schema: { $ref: '#/components/schemas/InventorySnapshotResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /inventory/transactions:
+    get:
+      tags: [Inventory]
+      summary: List inventory transactions (ADMIN/MANAGER)
+      parameters:
+        - { name: storeId, in: query, schema: { type: string } }
+        - { name: productId, in: query, schema: { type: string } }
+      responses:
+        '200': { description: Transactions, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/InventoryTransactionResponse' } } } } }
+  /inventory/reservations:
+    post:
+      tags: [Inventory]
+      summary: Reserve stock against a reference, e.g. an order (ADMIN/MANAGER/CASHIER)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReserveRequest' }
+      responses:
+        '201': { description: Reserved, content: { application/json: { schema: { $ref: '#/components/schemas/ReservationResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /inventory/reservations/{id}/release:
+    post:
+      tags: [Inventory]
+      summary: Release an active stock reservation (ADMIN/MANAGER/CASHIER)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      responses:
+        '200': { description: Released, content: { application/json: { schema: { $ref: '#/components/schemas/ReservationResponse' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /inventory/reservations/{id}/commit:
+    post:
+      tags: [Inventory]
+      summary: Commit (finalize) an active stock reservation (ADMIN/MANAGER/CASHIER)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      responses:
+        '200': { description: Committed, content: { application/json: { schema: { $ref: '#/components/schemas/ReservationResponse' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /inventory/snapshot:
+    get:
+      tags: [Inventory]
+      summary: Get a single product/store inventory snapshot (any authenticated role)
+      parameters:
+        - { name: productId, in: query, required: true, schema: { type: string } }
+        - { name: storeId, in: query, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Snapshot, content: { application/json: { schema: { $ref: '#/components/schemas/InventorySnapshotResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /inventory/snapshots:
+    get:
+      tags: [Inventory]
+      summary: List inventory snapshots, optionally filtered (any authenticated role)
+      parameters:
+        - { name: productId, in: query, schema: { type: string } }
+        - { name: storeId, in: query, schema: { type: string } }
+      responses:
+        '200': { description: Snapshots, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/InventorySnapshotResponse' } } } } }
+
+  # ============================================================
+  # Stock Counts
+  # ============================================================
+  /inventory/stock-counts:
+    post:
+      tags: [Stock Counts]
+      summary: Submit a physical stock count for a store (ADMIN/MANAGER)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SubmitStockCountRequest' }
+      responses:
+        '201': { description: Reconciled, content: { application/json: { schema: { $ref: '#/components/schemas/StockCountResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    get:
+      tags: [Stock Counts]
+      summary: List stock counts, optionally filtered by store (any authenticated role)
+      parameters:
+        - { name: storeId, in: query, schema: { type: string } }
+      responses:
+        '200': { description: Stock counts, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/StockCountResponse' } } } } }
+  /inventory/stock-counts/{id}:
+    get:
+      tags: [Stock Counts]
+      summary: Get a single stock count with its variance report (any authenticated role)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      responses:
+        '200': { description: Stock count, content: { application/json: { schema: { $ref: '#/components/schemas/StockCountResponse' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ============================================================
+  # Shifts
+  # ============================================================
+  /shifts/open:
+    post:
+      tags: [Shifts]
+      summary: Open a new cashier shift at a store (ADMIN/MANAGER/CASHIER)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OpenShiftRequest' }
+      responses:
+        '201': { description: Opened, content: { application/json: { schema: { $ref: '#/components/schemas/ShiftResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /shifts:
+    get:
+      tags: [Shifts]
+      summary: List shifts, optionally filtered (ADMIN/MANAGER/CASHIER)
+      parameters:
+        - { name: storeId, in: query, schema: { type: string } }
+        - { name: cashierId, in: query, schema: { type: string } }
+      responses:
+        '200': { description: Shifts, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ShiftResponse' } } } } }
+  /shifts/{id}:
+    get:
+      tags: [Shifts]
+      summary: Get a single shift (ADMIN/MANAGER/CASHIER)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      responses:
+        '200': { description: Shift, content: { application/json: { schema: { $ref: '#/components/schemas/ShiftResponse' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /shifts/{id}/close:
+    post:
+      tags: [Shifts]
+      summary: Close a shift, computing expected cash and variance (ADMIN/MANAGER/CASHIER)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CloseShiftRequest' }
+      responses:
+        '200': { description: Closed, content: { application/json: { schema: { $ref: '#/components/schemas/ShiftResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: "Not open, or variance exceeds threshold without note/override", content: { application/json: { schema: { $ref: '#/components/schemas/RequiresOverrideOrNoteResponse' } } } }
+  /shifts/{id}/expected-cash:
+    get:
+      tags: [Shifts]
+      summary: Preview the expected cash amount without closing (ADMIN/MANAGER/CASHIER)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      responses:
+        '200': { description: Expected cash, content: { application/json: { schema: { $ref: '#/components/schemas/ExpectedCashResponse' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /shifts/{id}/audit-events:
+    get:
+      tags: [Shifts]
+      summary: List a shift's discrepancy/override audit trail (ADMIN/MANAGER)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      responses:
+        '200': { description: Audit events, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ShiftAuditEventResponse' } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ============================================================
+  # Carts
+  # ============================================================
+  /carts:
+    post:
+      tags: [Carts]
+      summary: Create a new open cart for a store (ADMIN/MANAGER/CASHIER)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateCartRequest' }
+            example: { storeId: "store-1" }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CartResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /carts/{id}:
+    get:
+      tags: [Carts]
+      summary: Fetch a cart with computed totals (ADMIN/MANAGER/CASHIER)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      responses:
+        '200': { description: Cart, content: { application/json: { schema: { $ref: '#/components/schemas/CartResponse' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /carts/{id}/items:
+    post:
+      tags: [Carts]
+      summary: Add a line item to an open cart (ADMIN/MANAGER/CASHIER)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AddCartItemRequest' }
+            example: { productId: "9f2b7e3a-1234-4c56-8d90-abcdef123456", quantity: 2 }
+      responses:
+        '200':
+          description: Item added
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CartResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /carts/{id}/items/{itemId}:
+    patch:
+      tags: [Carts]
+      summary: Update the quantity of a cart line item (ADMIN/MANAGER/CASHIER)
+      parameters:
+        - { $ref: '#/components/parameters/PathId' }
+        - { name: itemId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateCartItemQuantityRequest' }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/CartResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+    delete:
+      tags: [Carts]
+      summary: Remove/void an item from an open cart (ADMIN/MANAGER/CASHIER)
+      parameters:
+        - { $ref: '#/components/parameters/PathId' }
+        - { name: itemId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VoidCartItemRequest' }
+      responses:
+        '200': { description: Removed, content: { application/json: { schema: { $ref: '#/components/schemas/CartResponse' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /carts/{id}/discount:
+    put:
+      tags: [Carts]
+      summary: Set or clear the cart-level discount (ADMIN/MANAGER/CASHIER)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetCartDiscountRequest' }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/CartResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /carts/{id}/checkout:
+    post:
+      tags: [Carts]
+      summary: Convert a cart into an order (idempotent) (ADMIN/MANAGER/CASHIER)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CheckoutRequest' }
+            example: { idempotencyKey: "a1b2c3d4-e5f6-7890-abcd-ef1234567890" }
+      responses:
+        '201':
+          description: Order created (or 200 if this idempotencyKey was already processed)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrderResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  # ============================================================
+  # Orders
+  # ============================================================
+  /orders:
+    get:
+      tags: [Orders]
+      summary: List orders for a store within a time range (ADMIN/MANAGER, or API key scope ORDERS_READ)
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - { name: storeId, in: query, required: true, schema: { type: string } }
+        - { name: from, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: to, in: query, required: true, schema: { type: string, format: date-time } }
+      responses:
+        '200': { description: Orders, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/OrderResponse' } } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /orders/{id}:
+    get:
+      tags: [Orders]
+      summary: Fetch a single order (ADMIN/MANAGER/CASHIER, or API key scope ORDERS_READ)
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      responses:
+        '200':
+          description: Order
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrderResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /orders/{id}/events:
+    get:
+      tags: [Orders]
+      summary: List an order's audit/event trail (ADMIN/MANAGER/CASHIER)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      responses:
+        '200': { description: Events, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/OrderEventResponse' } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /orders/{id}/payments:
+    post:
+      tags: [Orders]
+      summary: Confirm/record a manual payment against a pending order (ADMIN/MANAGER/CASHIER)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ConfirmPaymentRequest' }
+            example: { method: "CASH", amount: 42.50 }
+      responses:
+        '200':
+          description: Payment confirmed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrderResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /orders/{id}/refund:
+    post:
+      tags: [Orders]
+      summary: Refund an order via card gateway or manual method, optionally restocking (ADMIN/MANAGER)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefundRequest' }
+            example:
+              refundId: "refund-a1b2c3"
+              method: "MANUAL"
+              lineItems: [ { cartItemId: "item-1", quantity: 1, restock: true } ]
+              reason: "Customer changed their mind"
+      responses:
+        '200':
+          description: Refunded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrderResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '502': { description: Payment gateway error, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  # ============================================================
+  # Payments
+  # ============================================================
+  /payments:
+    post:
+      tags: [Payments]
+      summary: Create a card payment against an order via the payment gateway (ADMIN/MANAGER/CASHIER)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePaymentRequest' }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/PaymentResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '502': { description: Gateway error, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+  /payments/{id}:
+    get:
+      tags: [Payments]
+      summary: Fetch a payment (ADMIN/MANAGER/CASHIER)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      responses:
+        '200': { description: Payment, content: { application/json: { schema: { $ref: '#/components/schemas/PaymentResponse' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /payments/{id}/refund:
+    post:
+      tags: [Payments]
+      summary: Refund a gateway payment directly (ADMIN/MANAGER)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefundPaymentRequest' }
+      responses:
+        '200': { description: Refunded, content: { application/json: { schema: { $ref: '#/components/schemas/PaymentResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '502': { description: Gateway error, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+  /payments/refunds/unresolved:
+    get:
+      tags: [Payments]
+      summary: List refund attempts stuck in an ambiguous gateway state (ADMIN/MANAGER)
+      responses:
+        '200': { description: Unresolved refund attempts, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/RefundAttemptResponse' } } } } }
+  /payments/webhook:
+    post:
+      tags: [Payments]
+      summary: Payment gateway/terminal webhook callback (HMAC-signed, not JWT)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WebhookPayload' }
+      responses:
+        '200': { description: Processed (or already-processed), content: { application/json: { schema: { $ref: '#/components/schemas/PaymentResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ============================================================
+  # Sync
+  # ============================================================
+  /sync/conflicts:
+    get:
+      tags: [Sync]
+      summary: List offline-sale sync conflicts awaiting review (ADMIN/MANAGER)
+      responses:
+        '200': { description: Conflicts, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/OfflineSaleConflictResponse' } } } } }
+  /sync/offline-sales:
+    post:
+      tags: [Sync]
+      summary: Ingest a batch of offline POS sales from a device
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OfflineSaleBatchRequest' }
+      responses:
+        '200': { description: Batch processed, content: { application/json: { schema: { $ref: '#/components/schemas/OfflineSaleBatchResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Device deprovisioned, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  # ============================================================
+  # Printing
+  # ============================================================
+  /printers:
+    post:
+      tags: [Printing]
+      summary: Register a new printer for a store (ADMIN/MANAGER)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterPrinterRequest' }
+      responses:
+        '201': { description: Registered, content: { application/json: { schema: { $ref: '#/components/schemas/PrinterResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+    get:
+      tags: [Printing]
+      summary: List printers, optionally filtered by store (ADMIN/MANAGER/CASHIER)
+      parameters:
+        - { name: storeId, in: query, schema: { type: string } }
+      responses:
+        '200': { description: Printers, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/PrinterResponse' } } } } }
+  /printers/{id}/status:
+    patch:
+      tags: [Printing]
+      summary: Update a printer's online/offline status (ADMIN/MANAGER)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetPrinterStatusRequest' }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/PrinterResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /orders/{id}/print:
+    post:
+      tags: [Printing]
+      summary: Submit a receipt print job for an order (ADMIN/MANAGER/CASHIER)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PrintReceiptRequest' }
+      responses:
+        '200': { description: Printed or queued, content: { application/json: { schema: { $ref: '#/components/schemas/PrintJobResponse' } } } }
+        '202': { description: Queued (printer offline), content: { application/json: { schema: { $ref: '#/components/schemas/PrintJobResponse' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ============================================================
+  # Email
+  # ============================================================
+  /orders/{id}/email-receipt:
+    post:
+      tags: [Email]
+      summary: Email an order receipt to a recipient (ADMIN/MANAGER/CASHIER)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EmailReceiptRequest' }
+      responses:
+        '200': { description: Sent (or failed - see status field), content: { application/json: { schema: { $ref: '#/components/schemas/EmailReceiptResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '502': { description: Gateway failure, content: { application/json: { schema: { $ref: '#/components/schemas/EmailReceiptResponse' } } } }
+
+  # ============================================================
+  # Reporting
+  # ============================================================
+  /reports/pipeline/run:
+    post:
+      tags: [Reporting]
+      summary: Trigger an analytics pipeline run for a period (ADMIN/MANAGER, rate-limited)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RunPipelineRequest' }
+      responses:
+        '201': { description: Run started, content: { application/json: { schema: { $ref: '#/components/schemas/PipelineRunResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '429': { description: Rate limited, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '503': { description: Kill switch active, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+  /reports/pipeline/backfill:
+    post:
+      tags: [Reporting]
+      summary: Backfill pipeline runs across a date range (ADMIN/MANAGER, rate-limited)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BackfillRequest' }
+      responses:
+        '201': { description: Runs started, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/PipelineRunResponse' } } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '429': { description: Rate limited, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '503': { description: Kill switch active, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+  /reports/pipeline/runs:
+    get:
+      tags: [Reporting]
+      summary: List all pipeline runs (ADMIN/MANAGER)
+      responses:
+        '200': { description: Runs, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/PipelineRunResponse' } } } } }
+  /reports/pipeline/runs/{id}:
+    get:
+      tags: [Reporting]
+      summary: Fetch a single pipeline run (ADMIN/MANAGER)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      responses:
+        '200': { description: Run, content: { application/json: { schema: { $ref: '#/components/schemas/PipelineRunResponse' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /reports/sales/realtime:
+    get:
+      tags: [Reporting]
+      summary: Real-time in-progress-period sales totals (ADMIN/MANAGER, or API key scope REPORTS_READ)
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - { name: storeId, in: query, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Sales aggregate, content: { application/json: { schema: { $ref: '#/components/schemas/SalesAggregateResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /reports/sales:
+    get:
+      tags: [Reporting]
+      summary: Sales aggregate report(s) for a store/period (ADMIN/MANAGER, or API key scope REPORTS_READ)
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - { name: storeId, in: query, schema: { type: string } }
+        - { name: period, in: query, schema: { type: string } }
+        - { name: periodStart, in: query, schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: Sales aggregate(s) - a single object if periodStart is given, otherwise a list
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/SalesAggregateResponse'
+                  - type: array
+                    items: { $ref: '#/components/schemas/SalesAggregateResponse' }
+              example: { storeId: "store-1", period: "DAILY", periodStart: "2026-01-01T00:00:00Z", periodEnd: "2026-01-02T00:00:00Z", orderCount: 42, itemsSold: 87, grossSales: 1204.50, discountTotal: 30.00, taxCollected: 96.36, refundsTotal: 15.00, netSales: 1159.50, generatedAt: "2026-01-02T00:05:00Z" }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /reports/inventory:
+    get:
+      tags: [Reporting]
+      summary: Inventory variance aggregate report(s) (ADMIN/MANAGER, or API key scope REPORTS_READ)
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - { name: storeId, in: query, schema: { type: string } }
+        - { name: period, in: query, schema: { type: string } }
+        - { name: periodStart, in: query, schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: Inventory aggregate(s)
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/InventoryAggregateResponse'
+                  - type: array
+                    items: { $ref: '#/components/schemas/InventoryAggregateResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /reports/top-products:
+    get:
+      tags: [Reporting]
+      summary: Top-selling products for a store/period (ADMIN/MANAGER, or API key scope REPORTS_READ)
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - { name: storeId, in: query, required: true, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, default: 5 } }
+        - { name: period, in: query, schema: { type: string, default: DAILY } }
+        - { name: asOf, in: query, schema: { type: string, format: date-time } }
+      responses:
+        '200': { description: Top products, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ProductSalesSummaryResponse' } } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /reports/cash-on-hand:
+    get:
+      tags: [Reporting]
+      summary: Expected cash-on-hand across open shifts (ADMIN/MANAGER, or API key scope REPORTS_READ)
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - { name: storeId, in: query, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Cash-on-hand, content: { application/json: { schema: { $ref: '#/components/schemas/CashOnHandResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /reports/staff:
+    get:
+      tags: [Reporting]
+      summary: Staff performance / cash-variance aggregate report(s) (ADMIN/MANAGER, or API key scope REPORTS_READ)
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - { name: storeId, in: query, schema: { type: string } }
+        - { name: period, in: query, schema: { type: string } }
+        - { name: periodStart, in: query, schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: Staff aggregate(s)
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/StaffAggregateResponse'
+                  - type: array
+                    items: { $ref: '#/components/schemas/StaffAggregateResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ============================================================
+  # Finance Reports
+  # ============================================================
+  /finance/reports/generate:
+    get:
+      tags: [Finance Reports]
+      summary: Generate and download a finance report file (ADMIN/MANAGER, rate-limited)
+      parameters:
+        - { name: storeId, in: query, required: true, schema: { type: string } }
+        - { name: type, in: query, required: true, schema: { type: string } }
+        - { name: format, in: query, required: true, schema: { type: string } }
+        - { name: timezone, in: query, required: true, schema: { type: string } }
+        - { name: from, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: to, in: query, required: true, schema: { type: string, format: date-time } }
+      responses:
+        '200': { description: "Report file (Content-Disposition attachment; body is raw bytes, not JSON)", content: { application/octet-stream: { schema: { type: string, format: binary } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { description: Rate limited, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '503': { description: Kill switch active, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+  /finance/reports/schedules:
+    get:
+      tags: [Finance Reports]
+      summary: List finance report delivery schedules (ADMIN/MANAGER)
+      parameters:
+        - { name: storeId, in: query, schema: { type: string } }
+      responses:
+        '200': { description: Schedules, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ScheduledReportResponse' } } } } }
+    post:
+      tags: [Finance Reports]
+      summary: Create a recurring finance report delivery schedule (ADMIN)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateScheduleRequest' }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/ScheduledReportResponse' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /finance/reports/schedules/{id}:
+    delete:
+      tags: [Finance Reports]
+      summary: Delete a finance report schedule (ADMIN)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /finance/reports/schedules/{id}/runs:
+    get:
+      tags: [Finance Reports]
+      summary: List past runs of a schedule (ADMIN/MANAGER)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      responses:
+        '200': { description: Runs, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/ScheduledReportRunResponse' } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /finance/reports/schedules/{id}/run-now:
+    post:
+      tags: [Finance Reports]
+      summary: Immediately trigger an out-of-cycle schedule run (ADMIN, rate-limited)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      responses:
+        '200': { description: Run triggered, content: { application/json: { schema: { $ref: '#/components/schemas/ScheduledReportRunResponse' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { description: Rate limited, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '503': { description: Kill switch active, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  # ============================================================
+  # Backups
+  # ============================================================
+  /ops/backups/run-now:
+    post:
+      tags: [Backups]
+      summary: Trigger an immediate database backup (ADMIN)
+      responses:
+        '201': { description: Backup created, content: { application/json: { schema: { $ref: '#/components/schemas/BackupMetadataResponse' } } } }
+        '500': { description: Backup failed, content: { application/json: { schema: { $ref: '#/components/schemas/BackupMetadataResponse' } } } }
+  /ops/backups:
+    get:
+      tags: [Backups]
+      summary: List all backups and their metadata (ADMIN)
+      responses:
+        '200': { description: Backups, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/BackupMetadataResponse' } } } } }
+  /ops/backups/{id}/restore:
+    post:
+      tags: [Backups]
+      summary: Restore a backup into a non-production target database, as a DR drill (ADMIN)
+      parameters: [ { $ref: '#/components/parameters/PathId' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RestoreRequest' }
+      responses:
+        '200': { description: Restored, content: { application/json: { schema: { $ref: '#/components/schemas/RestoreDrillResultResponse' } } } }
+        '400': { description: Refused production target, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: A user JWT access token from /auth/login (or /auth/mfa/verify, /auth/sso/callback).
+    apiKeyAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: "posly_<key-id>-<secret>"
+      description: |
+        An API key created via POST /api-keys, format posly_<key-id>-<secret>. Only accepted on
+        routes that explicitly list apiKeyAuth as an alternative security requirement, and only
+        within its granted scopes (ORDERS_READ, PRODUCTS_READ, REPORTS_READ). See API_KEYS.md.
+  parameters:
+    PathId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Unauthorized:
+      description: Missing/invalid credentials
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Conflict:
+      description: Conflicting state (duplicate, wrong status, etc.)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error: { type: string }
+      required: [error]
+
+    # ---- Auth ----
+    LoginRequest:
+      type: object
+      properties: { username: { type: string }, password: { type: string } }
+      required: [username, password]
+    LoginResponse:
+      type: object
+      properties:
+        accessToken: { type: string, nullable: true }
+        refreshToken: { type: string, nullable: true }
+        mfaRequired: { type: boolean, default: false }
+        mfaToken: { type: string, nullable: true }
+    RefreshRequest:
+      type: object
+      properties: { refreshToken: { type: string } }
+      required: [refreshToken]
+    RefreshResponse:
+      type: object
+      properties: { accessToken: { type: string } }
+      required: [accessToken]
+    LogoutRequest:
+      type: object
+      properties: { refreshToken: { type: string } }
+      required: [refreshToken]
+    MfaVerifyRequest:
+      type: object
+      properties: { mfaToken: { type: string }, code: { type: string } }
+      required: [mfaToken, code]
+    MfaVerifyResponse:
+      type: object
+      properties: { accessToken: { type: string }, refreshToken: { type: string } }
+      required: [accessToken, refreshToken]
+    MeResponse:
+      type: object
+      properties:
+        userId: { type: string, nullable: true }
+        roles: { type: array, items: { type: string } }
+    SsoCallbackRequest:
+      type: object
+      properties:
+        externalId: { type: string }
+        email: { type: string }
+        externalGroups: { type: array, items: { type: string }, default: [] }
+      required: [externalId, email]
+    SsoLoginResponse:
+      type: object
+      properties: { accessToken: { type: string }, refreshToken: { type: string } }
+
+    # ---- Users ----
+    UserResponse:
+      type: object
+      properties:
+        id: { type: string }
+        username: { type: string }
+        email: { type: string }
+        roles: { type: array, items: { type: string } }
+        storeIds: { type: array, items: { type: string } }
+        status: { type: string }
+        mfaEnabled: { type: boolean }
+        roleVersion: { type: integer }
+        externalId: { type: string, nullable: true }
+    InviteUserRequest:
+      type: object
+      properties:
+        username: { type: string }
+        email: { type: string }
+        roles: { type: array, items: { type: string } }
+        storeIds: { type: array, items: { type: string }, default: [] }
+      required: [username, email, roles]
+    InviteUserResponse:
+      type: object
+      properties:
+        user: { $ref: '#/components/schemas/UserResponse' }
+        inviteToken: { type: string }
+        emailDelivered: { type: boolean }
+    AcceptInviteRequest:
+      type: object
+      properties: { token: { type: string }, newPassword: { type: string } }
+      required: [token, newPassword]
+    UpdateRolesRequest:
+      type: object
+      properties: { roles: { type: array, items: { type: string } } }
+      required: [roles]
+    UpdateStoreAccessRequest:
+      type: object
+      properties: { storeIds: { type: array, items: { type: string } } }
+      required: [storeIds]
+    UpdateStatusRequest:
+      type: object
+      properties: { status: { type: string } }
+      required: [status]
+    AuditLogEntryResponse:
+      type: object
+      properties:
+        id: { type: string, nullable: true }
+        timestamp: { type: string, format: date-time }
+        event: { type: string }
+        username: { type: string, nullable: true }
+        userId: { type: string, nullable: true }
+        deviceId: { type: string, nullable: true }
+        correlationId: { type: string, nullable: true }
+        remoteIp: { type: string, nullable: true }
+        detail: { type: string, nullable: true }
+    AuditRetentionResultResponse:
+      type: object
+      properties:
+        id: { type: string }
+        ranAt: { type: string, format: date-time }
+        cutoff: { type: string, format: date-time }
+        purgedCount: { type: integer }
+        archiveFilePath: { type: string, nullable: true }
+    SsoRoleMappingDto:
+      type: object
+      properties: { externalGroup: { type: string }, role: { type: string } }
+    SsoConfigureRequest:
+      type: object
+      properties:
+        providerName: { type: string }
+        roleMappings: { type: array, items: { $ref: '#/components/schemas/SsoRoleMappingDto' } }
+        defaultRoles: { type: array, items: { type: string } }
+        enabled: { type: boolean, default: true }
+    SsoConfigurationResponse:
+      type: object
+      properties:
+        providerName: { type: string }
+        enabled: { type: boolean }
+        roleMappings: { type: array, items: { $ref: '#/components/schemas/SsoRoleMappingDto' } }
+        defaultRoles: { type: array, items: { type: string } }
+        configuredAt: { type: string, format: date-time }
+
+    # ---- Devices ----
+    CreatePairCodeRequest:
+      type: object
+      properties:
+        storeId: { type: string }
+        expiresInSeconds: { type: integer, nullable: true }
+        terminalType: { type: string, nullable: true }
+      required: [storeId]
+    PairCodeResponse:
+      type: object
+      properties:
+        code: { type: string }
+        storeId: { type: string }
+        expiresAt: { type: string, format: date-time }
+        terminalType: { type: string, nullable: true }
+    ValidatePairCodeRequest:
+      type: object
+      properties: { code: { type: string } }
+      required: [code]
+    ValidatePairCodeResponse:
+      type: object
+      properties:
+        valid: { type: boolean }
+        storeId: { type: string, nullable: true }
+        expiresAt: { type: string, format: date-time, nullable: true }
+        error: { type: string, nullable: true }
+    RevokePairCodeRequest:
+      type: object
+      properties: { code: { type: string } }
+      required: [code]
+    DeviceResponse:
+      type: object
+      properties:
+        id: { type: string }
+        storeId: { type: string }
+        name: { type: string }
+        terminalType: { type: string, nullable: true }
+        enrolledAt: { type: string, format: date-time }
+        status: { type: string }
+        healthStatus: { type: string }
+        lastSeenAt: { type: string, format: date-time, nullable: true }
+        deprovisionedAt: { type: string, format: date-time, nullable: true }
+    EnrollDeviceRequest:
+      type: object
+      properties:
+        code: { type: string }
+        storeId: { type: string, nullable: true }
+        name: { type: string, nullable: true }
+      required: [code]
+    EnrollDeviceResponse:
+      type: object
+      properties:
+        deviceId: { type: string }
+        storeId: { type: string }
+        clientId: { type: string }
+        clientSecret: { type: string }
+    HeartbeatRequest:
+      type: object
+      properties: { clientId: { type: string }, clientSecret: { type: string } }
+      required: [clientId, clientSecret]
+    HeartbeatResponse:
+      type: object
+      properties: { status: { type: string }, lastSeenAt: { type: string, format: date-time } }
+
+    # ---- API Keys ----
+    CreateApiKeyRequest:
+      type: object
+      properties:
+        name: { type: string }
+        scopes: { type: array, items: { type: string, enum: [ORDERS_READ, PRODUCTS_READ, REPORTS_READ] } }
+      required: [name, scopes]
+    ApiKeyResponse:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        keyPrefix: { type: string }
+        scopes: { type: array, items: { type: string } }
+        status: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        createdBy: { type: string, nullable: true }
+        lastUsedAt: { type: string, format: date-time, nullable: true }
+        revokedAt: { type: string, format: date-time, nullable: true }
+        revokedBy: { type: string, nullable: true }
+    ApiKeyCreatedResponse:
+      type: object
+      properties:
+        apiKey: { $ref: '#/components/schemas/ApiKeyResponse' }
+        rawKey: { type: string, description: "Shown exactly once - never recoverable again." }
+    ApiKeyUsageResponse:
+      type: object
+      properties:
+        id: { type: string }
+        method: { type: string }
+        path: { type: string }
+        statusCode: { type: integer }
+        timestamp: { type: string, format: date-time }
+
+    # ---- Secrets ----
+    SecretVersionSummaryResponse:
+      type: object
+      properties:
+        id: { type: string }
+        issuedAt: { type: string, format: date-time }
+        validUntil: { type: string, format: date-time, nullable: true }
+        status: { type: string, enum: [CURRENT, IN_GRACE_PERIOD, EXPIRED] }
+    SecretSummaryResponse:
+      type: object
+      properties:
+        name: { type: string }
+        current: { $ref: '#/components/schemas/SecretVersionSummaryResponse' }
+        history: { type: array, items: { $ref: '#/components/schemas/SecretVersionSummaryResponse' } }
+    SecretRotationResponse:
+      type: object
+      properties:
+        secretName: { type: string }
+        newVersionId: { type: string }
+        newValue: { type: string, description: "Shown exactly once." }
+        issuedAt: { type: string, format: date-time }
+        previousVersionGraceExpiresAt: { type: string, format: date-time, nullable: true }
+
+    # ---- Feature Flags ----
+    CreateFeatureFlagRequest:
+      type: object
+      properties:
+        key: { type: string }
+        description: { type: string }
+        enabled: { type: boolean, default: false }
+        rolloutPercentage: { type: integer, default: 0 }
+      required: [key, description]
+    UpdateFeatureFlagRequest:
+      type: object
+      properties:
+        enabled: { type: boolean, nullable: true }
+        rolloutPercentage: { type: integer, nullable: true }
+        enabledStoreIds: { type: array, items: { type: string }, nullable: true }
+    FeatureFlagResponse:
+      type: object
+      properties:
+        id: { type: string }
+        key: { type: string }
+        description: { type: string }
+        enabled: { type: boolean }
+        rolloutPercentage: { type: integer }
+        enabledStoreIds: { type: array, items: { type: string } }
+        createdAt: { type: integer, format: int64 }
+        updatedAt: { type: integer, format: int64 }
+    FlagEvaluationResponse:
+      type: object
+      properties:
+        key: { type: string }
+        storeId: { type: string }
+        enabled: { type: boolean }
+        reason: { type: string }
+
+    # ---- Webhooks ----
+    RegisterWebhookRequest:
+      type: object
+      properties:
+        url: { type: string }
+        secret: { type: string }
+        eventTypes: { type: array, items: { type: string } }
+      required: [url, secret, eventTypes]
+    WebhookSubscriptionResponse:
+      type: object
+      properties:
+        id: { type: string }
+        url: { type: string }
+        eventTypes: { type: array, items: { type: string } }
+        createdAt: { type: string, format: date-time }
+    WebhookDeliveryResponse:
+      type: object
+      properties:
+        id: { type: string }
+        subscriptionId: { type: string }
+        eventType: { type: string }
+        eventId: { type: string }
+        status: { type: string }
+        attempts: { type: integer }
+        lastError: { type: string, nullable: true }
+        lastStatusCode: { type: integer, nullable: true }
+        createdAt: { type: string, format: date-time }
+        deliveredAt: { type: string, format: date-time, nullable: true }
+        deadLetteredAt: { type: string, format: date-time, nullable: true }
+
+    # ---- Tax Profiles / Tax ----
+    TaxRateRequest:
+      type: object
+      properties:
+        name: { type: string }
+        ratePercent: { type: number }
+        order: { type: integer, default: 0 }
+        compoundsOnPrior: { type: boolean, default: false }
+      required: [name, ratePercent]
+    TaxRateResponse:
+      type: object
+      properties:
+        name: { type: string }
+        ratePercent: { type: number }
+        order: { type: integer }
+        compoundsOnPrior: { type: boolean }
+    CreateTaxProfileRequest:
+      type: object
+      properties:
+        name: { type: string }
+        rates: { type: array, items: { $ref: '#/components/schemas/TaxRateRequest' } }
+        pricingMode: { type: string, default: EXCLUSIVE }
+        roundingMode: { type: string, default: HALF_UP }
+      required: [name, rates]
+    UpdateTaxProfileRequest:
+      type: object
+      properties:
+        name: { type: string, nullable: true }
+        rates: { type: array, items: { $ref: '#/components/schemas/TaxRateRequest' }, nullable: true }
+        pricingMode: { type: string, nullable: true }
+        roundingMode: { type: string, nullable: true }
+    TaxProfileResponse:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        rates: { type: array, items: { $ref: '#/components/schemas/TaxRateResponse' } }
+        pricingMode: { type: string }
+        roundingMode: { type: string }
+        createdAt: { type: integer, format: int64 }
+        updatedAt: { type: integer, format: int64 }
+    CalculateTaxRequest:
+      type: object
+      properties: { amount: { type: number } }
+      required: [amount]
+    TaxBreakdownItem:
+      type: object
+      properties: { name: { type: string }, ratePercent: { type: number }, amount: { type: number } }
+    CalculateTaxResponse:
+      type: object
+      properties:
+        subtotal: { type: number }
+        breakdown: { type: array, items: { $ref: '#/components/schemas/TaxBreakdownItem' } }
+        totalTax: { type: number }
+        total: { type: number }
+    TaxCalculateLineRequest:
+      type: object
+      properties: { id: { type: string }, amount: { type: number }, taxCategory: { type: string } }
+    TaxCalculateRequest:
+      type: object
+      properties:
+        taxProfileId: { type: string }
+        lines: { type: array, items: { $ref: '#/components/schemas/TaxCalculateLineRequest' } }
+      required: [taxProfileId, lines]
+    TaxCalculateResponse:
+      type: object
+      properties:
+        taxableAmount: { type: number }
+        exemptAmount: { type: number }
+        breakdown: { type: array, items: { $ref: '#/components/schemas/TaxBreakdownItem' } }
+        totalTax: { type: number }
+        total: { type: number }
+
+    # ---- Products ----
+    ModifierRequest:
+      type: object
+      properties: { name: { type: string }, options: { type: array, items: { type: string } } }
+    ModifierResponse:
+      type: object
+      properties: { name: { type: string }, options: { type: array, items: { type: string } } }
+    CreateProductRequest:
+      type: object
+      properties:
+        sku: { type: string }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        price: { type: number }
+        taxCategory: { type: string, default: STANDARD }
+        modifiers: { type: array, items: { $ref: '#/components/schemas/ModifierRequest' }, default: [] }
+        imageUrls: { type: array, items: { type: string }, default: [] }
+        barcode: { type: string, nullable: true }
+        category: { type: string, nullable: true }
+        inStock: { type: boolean, default: true }
+      required: [sku, name, price]
+    CreateProductResponse:
+      type: object
+      properties: { id: { type: string } }
+    UpdateProductRequest:
+      type: object
+      properties:
+        name: { type: string, nullable: true }
+        description: { type: string, nullable: true }
+        price: { type: number, nullable: true }
+        taxCategory: { type: string, nullable: true }
+        modifiers: { type: array, items: { $ref: '#/components/schemas/ModifierRequest' }, nullable: true }
+        barcode: { type: string, nullable: true }
+        category: { type: string, nullable: true }
+        inStock: { type: boolean, nullable: true }
+    ProductResponse:
+      type: object
+      properties:
+        id: { type: string }
+        sku: { type: string }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        price: { type: number }
+        taxCategory: { type: string }
+        modifiers: { type: array, items: { $ref: '#/components/schemas/ModifierResponse' } }
+        imageUrls: { type: array, items: { type: string } }
+        barcode: { type: string, nullable: true }
+        category: { type: string, nullable: true }
+        inStock: { type: boolean }
+        createdAt: { type: integer, format: int64 }
+        updatedAt: { type: integer, format: int64 }
+    ImageUploadResponse:
+      type: object
+      properties: { imageUrl: { type: string } }
+
+    # ---- Product Import ----
+    UploadCsvResponse:
+      type: object
+      properties:
+        fileId: { type: string }
+        headers: { type: array, items: { type: string } }
+        previewRows: { type: array, items: { type: array, items: { type: string } } }
+        totalRows: { type: integer }
+    ImportMappingRequest:
+      type: object
+      properties: { mapping: { type: object, additionalProperties: { type: string } } }
+    ImportRowOutcomeResponse:
+      type: object
+      properties:
+        rowNumber: { type: integer }
+        action: { type: string, enum: [CREATED, UPDATED, ERROR] }
+        sku: { type: string, nullable: true }
+        errors: { type: array, items: { type: string } }
+    DryRunResponse:
+      type: object
+      properties: { outcomes: { type: array, items: { $ref: '#/components/schemas/ImportRowOutcomeResponse' } } }
+    ImportJobResponse:
+      type: object
+      properties:
+        id: { type: string }
+        fileId: { type: string }
+        status: { type: string, enum: [PENDING, RUNNING, COMPLETED, FAILED] }
+        totalRows: { type: integer }
+        processedRows: { type: integer }
+        createdCount: { type: integer }
+        updatedCount: { type: integer }
+        erroredCount: { type: integer }
+        rowOutcomes: { type: array, items: { $ref: '#/components/schemas/ImportRowOutcomeResponse' } }
+        rolledBack: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time, nullable: true }
+        error: { type: string, nullable: true }
+
+    # ---- Sales Import ----
+    UploadSalesCsvResponse:
+      type: object
+      properties:
+        fileId: { type: string }
+        headers: { type: array, items: { type: string } }
+        previewRows: { type: array, items: { type: array, items: { type: string } } }
+        totalRows: { type: integer }
+    SalesImportMappingRequest:
+      type: object
+      properties: { mapping: { type: object, additionalProperties: { type: string } } }
+    SalesRowOutcomeResponse:
+      type: object
+      properties:
+        rowNumber: { type: integer }
+        orderReference: { type: string }
+        result: { type: string, enum: [MATCHED, UNMATCHED] }
+        sku: { type: string, nullable: true }
+        errors: { type: array, items: { type: string } }
+    SalesOrderGroupPreviewResponse:
+      type: object
+      properties:
+        orderReference: { type: string }
+        rowNumbers: { type: array, items: { type: integer } }
+        importable: { type: boolean }
+        itemCount: { type: integer }
+        total: { type: number, nullable: true }
+        errors: { type: array, items: { type: string } }
+    SalesDryRunResponse:
+      type: object
+      properties:
+        rowOutcomes: { type: array, items: { $ref: '#/components/schemas/SalesRowOutcomeResponse' } }
+        groups: { type: array, items: { $ref: '#/components/schemas/SalesOrderGroupPreviewResponse' } }
+    SalesImportedOrderResponse:
+      type: object
+      properties:
+        orderReference: { type: string }
+        orderId: { type: string }
+        storeId: { type: string }
+        total: { type: number }
+        itemCount: { type: integer }
+    SalesImportJobResponse:
+      type: object
+      properties:
+        id: { type: string }
+        fileId: { type: string }
+        status: { type: string, enum: [PENDING, RUNNING, COMPLETED, FAILED] }
+        totalRows: { type: integer }
+        totalGroups: { type: integer }
+        processedGroups: { type: integer }
+        importedCount: { type: integer }
+        skippedUnmatchedCount: { type: integer }
+        skippedAlreadyImportedCount: { type: integer }
+        rowOutcomes: { type: array, items: { $ref: '#/components/schemas/SalesRowOutcomeResponse' } }
+        importedOrders: { type: array, items: { $ref: '#/components/schemas/SalesImportedOrderResponse' } }
+        rolledBack: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time, nullable: true }
+        error: { type: string, nullable: true }
+    SalesReconciliationReportResponse:
+      type: object
+      properties:
+        jobId: { type: string }
+        totalRowsProcessed: { type: integer }
+        totalGroups: { type: integer }
+        importedCount: { type: integer }
+        skippedUnmatchedCount: { type: integer }
+        skippedAlreadyImportedCount: { type: integer }
+        sampleMappings: { type: array, items: { $ref: '#/components/schemas/SalesImportedOrderResponse' } }
+        generatedAt: { type: string, format: date-time }
+
+    # ---- Search ----
+    SearchResultItem:
+      type: object
+      properties:
+        id: { type: string }
+        sku: { type: string }
+        name: { type: string }
+        price: { type: number }
+        category: { type: string, nullable: true }
+        inStock: { type: boolean }
+        barcode: { type: string, nullable: true }
+    SearchResponse:
+      type: object
+      properties:
+        results: { type: array, items: { $ref: '#/components/schemas/SearchResultItem' } }
+        page: { type: integer }
+        size: { type: integer }
+        total: { type: integer }
+
+    # ---- Stores ----
+    AddressDto:
+      type: object
+      properties:
+        line1: { type: string }
+        line2: { type: string, nullable: true }
+        city: { type: string }
+        state: { type: string, nullable: true }
+        postalCode: { type: string }
+        country: { type: string }
+      required: [line1, city, postalCode, country]
+    CreateStoreRequest:
+      type: object
+      properties:
+        name: { type: string }
+        address: { $ref: '#/components/schemas/AddressDto' }
+        timezone: { type: string }
+        currency: { type: string }
+        taxProfileId: { type: string, nullable: true }
+        locale: { type: string, default: en-US }
+      required: [name, address, timezone, currency]
+    UpdateStoreRequest:
+      type: object
+      properties:
+        name: { type: string, nullable: true }
+        address: { $ref: '#/components/schemas/AddressDto' }
+        timezone: { type: string, nullable: true }
+        currency: { type: string, nullable: true }
+        taxProfileId: { type: string, nullable: true }
+        locale: { type: string, nullable: true }
+    StoreResponse:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        address: { $ref: '#/components/schemas/AddressDto' }
+        timezone: { type: string }
+        currency: { type: string }
+        locale: { type: string }
+        taxProfileId: { type: string, nullable: true }
+        logoUrl: { type: string }
+        createdAt: { type: integer, format: int64 }
+        updatedAt: { type: integer, format: int64 }
+    LogoUploadResponse:
+      type: object
+      properties: { logoUrl: { type: string } }
+
+    # ---- Inventory ----
+    AdjustStockRequest:
+      type: object
+      properties:
+        productId: { type: string }
+        storeId: { type: string }
+        delta: { type: integer }
+        reason: { type: string }
+      required: [productId, storeId, delta, reason]
+    InventorySnapshotResponse:
+      type: object
+      properties:
+        productId: { type: string }
+        storeId: { type: string }
+        onHand: { type: integer }
+        reserved: { type: integer }
+        available: { type: integer }
+        version: { type: integer, format: int64 }
+    InventoryTransactionResponse:
+      type: object
+      properties:
+        id: { type: string }
+        productId: { type: string }
+        storeId: { type: string }
+        type: { type: string }
+        quantity: { type: integer }
+        referenceId: { type: string, nullable: true }
+        reason: { type: string, nullable: true }
+        actorId: { type: string, nullable: true }
+        createdAt: { type: integer, format: int64 }
+    ReserveRequest:
+      type: object
+      properties:
+        productId: { type: string }
+        storeId: { type: string }
+        quantity: { type: integer }
+        referenceId: { type: string }
+      required: [productId, storeId, quantity, referenceId]
+    ReservationResponse:
+      type: object
+      properties:
+        id: { type: string }
+        productId: { type: string }
+        storeId: { type: string }
+        quantity: { type: integer }
+        referenceId: { type: string }
+        status: { type: string }
+        createdAt: { type: integer, format: int64 }
+        updatedAt: { type: integer, format: int64 }
+
+    # ---- Stock Counts ----
+    StockCountLineRequest:
+      type: object
+      properties: { productId: { type: string }, countedQuantity: { type: integer } }
+    SubmitStockCountRequest:
+      type: object
+      properties:
+        storeId: { type: string }
+        lines: { type: array, items: { $ref: '#/components/schemas/StockCountLineRequest' } }
+      required: [storeId, lines]
+    StockCountVarianceResponse:
+      type: object
+      properties:
+        productId: { type: string }
+        expectedQuantity: { type: integer }
+        countedQuantity: { type: integer }
+        delta: { type: integer }
+        cause: { type: string }
+        probableCause: { type: string }
+        suggestedAdjustment: { type: integer }
+        adjustmentTransactionId: { type: string, nullable: true }
+    StockCountResponse:
+      type: object
+      properties:
+        id: { type: string }
+        storeId: { type: string }
+        variances: { type: array, items: { $ref: '#/components/schemas/StockCountVarianceResponse' } }
+        countedBy: { type: string, nullable: true }
+        countedAt: { type: integer, format: int64 }
+        hasVariance: { type: boolean }
+        totalVarianceUnits: { type: integer }
+
+    # ---- Shifts ----
+    OpenShiftRequest:
+      type: object
+      properties: { storeId: { type: string }, openingFloat: { type: number } }
+      required: [storeId, openingFloat]
+    CloseShiftRequest:
+      type: object
+      properties:
+        closingCount: { type: number }
+        note: { type: string, nullable: true }
+      required: [closingCount]
+    ShiftResponse:
+      type: object
+      properties:
+        id: { type: string }
+        storeId: { type: string }
+        cashierId: { type: string, nullable: true }
+        openingFloat: { type: number }
+        openedAt: { type: string, format: date-time }
+        status: { type: string }
+        closingCount: { type: number, nullable: true }
+        expectedCash: { type: number, nullable: true }
+        variance: { type: number, nullable: true }
+        varianceCause: { type: string, nullable: true }
+        possibleReasons: { type: array, items: { type: string } }
+        note: { type: string, nullable: true }
+        closedBy: { type: string, nullable: true }
+        closedAt: { type: string, format: date-time, nullable: true }
+    RequiresOverrideOrNoteResponse:
+      type: object
+      properties:
+        error: { type: string }
+        variance: { type: number }
+        threshold: { type: number }
+    ExpectedCashResponse:
+      type: object
+      properties: { expectedCash: { type: number }, asOf: { type: string, format: date-time } }
+    ShiftAuditEventResponse:
+      type: object
+      properties:
+        id: { type: string }
+        shiftId: { type: string }
+        type: { type: string }
+        actorId: { type: string, nullable: true }
+        detail: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+
+    # ---- Carts / Orders ----
+    CreateCartRequest:
+      type: object
+      properties: { storeId: { type: string } }
+      required: [storeId]
+    SelectedModifierRequest:
+      type: object
+      properties: { modifierId: { type: string }, option: { type: string } }
+    SelectedModifierResponse:
+      type: object
+      properties: { modifierId: { type: string }, option: { type: string }, additionalCost: { type: number } }
+    DiscountDto:
+      type: object
+      properties:
+        type: { type: string, enum: [PERCENTAGE, FIXED_AMOUNT] }
+        value: { type: number }
+      required: [type, value]
+    AddCartItemRequest:
+      type: object
+      properties:
+        productId: { type: string }
+        quantity: { type: integer }
+        selectedModifiers: { type: array, items: { $ref: '#/components/schemas/SelectedModifierRequest' }, default: [] }
+        discount: { $ref: '#/components/schemas/DiscountDto' }
+      required: [productId, quantity]
+    UpdateCartItemQuantityRequest:
+      type: object
+      properties: { quantity: { type: integer } }
+      required: [quantity]
+    VoidCartItemRequest:
+      type: object
+      properties: { reason: { type: string, nullable: true } }
+    SetCartDiscountRequest:
+      type: object
+      properties: { discount: { $ref: '#/components/schemas/DiscountDto' } }
+    CheckoutRequest:
+      type: object
+      properties: { idempotencyKey: { type: string } }
+      required: [idempotencyKey]
+    CartItemResponse:
+      type: object
+      properties:
+        id: { type: string }
+        productId: { type: string }
+        productName: { type: string }
+        quantity: { type: integer }
+        unitPrice: { type: number }
+        taxCategory: { type: string }
+        selectedModifiers: { type: array, items: { $ref: '#/components/schemas/SelectedModifierResponse' } }
+        discount: { $ref: '#/components/schemas/DiscountDto' }
+        lineSubtotal: { type: number }
+        lineDiscountAmount: { type: number }
+        lineTotal: { type: number }
+    TaxBreakdownLineResponse:
+      type: object
+      properties: { name: { type: string }, ratePercent: { type: number }, amount: { type: number } }
+    CartTotalsResponse:
+      type: object
+      properties:
+        subtotal: { type: number }
+        itemDiscountTotal: { type: number }
+        cartDiscountAmount: { type: number }
+        taxableAmount: { type: number }
+        taxBreakdown: { type: array, items: { $ref: '#/components/schemas/TaxBreakdownLineResponse' } }
+        totalTax: { type: number }
+        total: { type: number }
+    CartResponse:
+      type: object
+      properties:
+        id: { type: string }
+        storeId: { type: string }
+        status: { type: string, enum: [OPEN, CHECKED_OUT] }
+        items: { type: array, items: { $ref: '#/components/schemas/CartItemResponse' } }
+        discount: { $ref: '#/components/schemas/DiscountDto' }
+        totals: { $ref: '#/components/schemas/CartTotalsResponse' }
+        orderId: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    PaymentRecordResponse:
+      type: object
+      properties:
+        method: { type: string }
+        amount: { type: number }
+        reference: { type: string, nullable: true }
+        confirmedBy: { type: string, nullable: true }
+        confirmedAt: { type: string, format: date-time }
+        maskedCardNumber: { type: string, nullable: true }
+    RefundLineItemResponse:
+      type: object
+      properties:
+        cartItemId: { type: string }
+        quantity: { type: integer }
+        amount: { type: number }
+        restock: { type: boolean }
+    RefundRecordResponse:
+      type: object
+      properties:
+        refundId: { type: string }
+        method: { type: string }
+        lineItems: { type: array, items: { $ref: '#/components/schemas/RefundLineItemResponse' } }
+        amount: { type: number }
+        reason: { type: string, nullable: true }
+        refundedBy: { type: string, nullable: true }
+        refundedAt: { type: string, format: date-time }
+    OrderResponse:
+      type: object
+      properties:
+        id: { type: string }
+        cartId: { type: string }
+        storeId: { type: string }
+        items: { type: array, items: { $ref: '#/components/schemas/CartItemResponse' } }
+        discount: { $ref: '#/components/schemas/DiscountDto' }
+        totals: { $ref: '#/components/schemas/CartTotalsResponse' }
+        idempotencyKey: { type: string }
+        checkedOutAt: { type: string, format: date-time }
+        currency: { type: string }
+        status: { type: string, enum: [PENDING, PAID, PARTIALLY_REFUNDED, REFUNDED] }
+        payments: { type: array, items: { $ref: '#/components/schemas/PaymentRecordResponse' } }
+        amountPaid: { type: number }
+        remainingBalance: { type: number }
+        refunds: { type: array, items: { $ref: '#/components/schemas/RefundRecordResponse' } }
+        amountRefunded: { type: number }
+        remainingRefundable: { type: number }
+    OrderEventResponse:
+      type: object
+      properties:
+        timestamp: { type: string, format: date-time }
+        type: { type: string }
+        actorId: { type: string, nullable: true }
+        detail: { type: string, nullable: true }
+    ConfirmPaymentRequest:
+      type: object
+      properties:
+        method: { type: string }
+        amount: { type: number }
+        reference: { type: string, nullable: true }
+      required: [method, amount]
+    RefundLineItemRequest:
+      type: object
+      properties:
+        cartItemId: { type: string }
+        quantity: { type: integer }
+        restock: { type: boolean, default: false }
+      required: [cartItemId, quantity]
+    RefundRequest:
+      type: object
+      properties:
+        refundId: { type: string }
+        method: { type: string, enum: [CARD, MANUAL] }
+        lineItems: { type: array, items: { $ref: '#/components/schemas/RefundLineItemRequest' } }
+        reason: { type: string, nullable: true }
+      required: [refundId, method, lineItems]
+
+    # ---- Payments ----
+    CreatePaymentRequest:
+      type: object
+      properties:
+        orderId: { type: string }
+        amount: { type: number }
+        currency: { type: string, default: USD }
+      required: [orderId, amount]
+    PaymentResponse:
+      type: object
+      properties:
+        id: { type: string }
+        orderId: { type: string }
+        terminalTransactionId: { type: string }
+        amount: { type: number }
+        currency: { type: string }
+        status: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        declineReason: { type: string, nullable: true }
+        refundId: { type: string, nullable: true }
+        refundedAmount: { type: number, nullable: true }
+        maskedCardNumber: { type: string, nullable: true }
+    RefundPaymentRequest:
+      type: object
+      properties: { refundId: { type: string }, amount: { type: number } }
+      required: [refundId, amount]
+    RefundAttemptResponse:
+      type: object
+      properties:
+        refundId: { type: string }
+        paymentId: { type: string }
+        orderId: { type: string }
+        amount: { type: number }
+        status: { type: string }
+        attempts: { type: integer }
+        lastError: { type: string, nullable: true }
+        requestedAt: { type: string, format: date-time }
+        resolvedAt: { type: string, format: date-time, nullable: true }
+    WebhookPayload:
+      type: object
+      properties:
+        eventId: { type: string }
+        terminalTransactionId: { type: string }
+        outcome: { type: string, enum: [APPROVED, DECLINED] }
+        declineReason: { type: string, nullable: true }
+      required: [eventId, terminalTransactionId, outcome]
+
+    # ---- Sync ----
+    ItemConflictResponse:
+      type: object
+      properties:
+        sku: { type: string, nullable: true }
+        reason: { type: string, enum: [PRICE_CHANGED, TAX_CATEGORY_CHANGED, PRODUCT_NOT_FOUND, PAYMENT_MISMATCH, INVALID_SALE] }
+        capturedValue: { type: string, nullable: true }
+        currentValue: { type: string, nullable: true }
+    OfflineSaleConflictResponse:
+      type: object
+      properties:
+        idempotencyKey: { type: string }
+        deviceId: { type: string }
+        storeId: { type: string }
+        outcome: { type: string }
+        orderId: { type: string, nullable: true }
+        conflicts: { type: array, items: { $ref: '#/components/schemas/ItemConflictResponse' } }
+        processedAt: { type: string, format: date-time }
+    OfflineSaleModifierRequest:
+      type: object
+      properties: { modifierId: { type: string }, option: { type: string }, additionalCost: { type: number } }
+    OfflineSaleItemRequest:
+      type: object
+      properties:
+        sku: { type: string }
+        productName: { type: string }
+        quantity: { type: integer }
+        unitPriceAtSale: { type: number }
+        taxCategoryAtSale: { type: string }
+        selectedModifiers: { type: array, items: { $ref: '#/components/schemas/OfflineSaleModifierRequest' }, default: [] }
+        discount: { $ref: '#/components/schemas/DiscountDto' }
+    OfflineSalePaymentRequest:
+      type: object
+      properties: { method: { type: string }, amount: { type: number }, reference: { type: string, nullable: true } }
+    OfflineSaleRequest:
+      type: object
+      properties:
+        idempotencyKey: { type: string }
+        items: { type: array, items: { $ref: '#/components/schemas/OfflineSaleItemRequest' } }
+        discount: { $ref: '#/components/schemas/DiscountDto' }
+        payments: { type: array, items: { $ref: '#/components/schemas/OfflineSalePaymentRequest' }, default: [] }
+        soldAt: { type: string, format: date-time }
+        soldBy: { type: string, nullable: true }
+    OfflineSaleBatchRequest:
+      type: object
+      properties:
+        clientId: { type: string }
+        clientSecret: { type: string }
+        conflictPolicy: { type: string, enum: [REJECT, MAP, CONVERT], default: REJECT }
+        sales: { type: array, items: { $ref: '#/components/schemas/OfflineSaleRequest' } }
+      required: [clientId, clientSecret, sales]
+    OfflineSaleResultResponse:
+      type: object
+      properties:
+        idempotencyKey: { type: string }
+        outcome: { type: string }
+        orderId: { type: string, nullable: true }
+        replayed: { type: boolean }
+        conflicts: { type: array, items: { $ref: '#/components/schemas/ItemConflictResponse' } }
+    OfflineSaleBatchResponse:
+      type: object
+      properties: { results: { type: array, items: { $ref: '#/components/schemas/OfflineSaleResultResponse' } } }
+
+    # ---- Printing / Email ----
+    RegisterPrinterRequest:
+      type: object
+      properties:
+        storeId: { type: string }
+        name: { type: string }
+        connectionType: { type: string, enum: [LOCAL, USB, CLOUD] }
+      required: [storeId, name, connectionType]
+    SetPrinterStatusRequest:
+      type: object
+      properties: { status: { type: string, enum: [ONLINE, OFFLINE] } }
+      required: [status]
+    PrinterResponse:
+      type: object
+      properties:
+        id: { type: string }
+        storeId: { type: string }
+        name: { type: string }
+        connectionType: { type: string }
+        status: { type: string }
+        registeredAt: { type: string, format: date-time }
+    PrintReceiptRequest:
+      type: object
+      properties: { printerId: { type: string } }
+      required: [printerId]
+    PrintJobResponse:
+      type: object
+      properties:
+        id: { type: string }
+        orderId: { type: string }
+        printerId: { type: string }
+        status: { type: string }
+        message: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+    EmailReceiptRequest:
+      type: object
+      properties: { recipient: { type: string } }
+      required: [recipient]
+    EmailReceiptResponse:
+      type: object
+      properties:
+        id: { type: string }
+        orderId: { type: string }
+        recipient: { type: string }
+        status: { type: string }
+        message: { type: string, nullable: true }
+        sentAt: { type: string, format: date-time }
+
+    # ---- Reporting ----
+    RunPipelineRequest:
+      type: object
+      properties:
+        period: { type: string }
+        asOf: { type: string, format: date-time, nullable: true }
+        storeIds: { type: array, items: { type: string }, nullable: true }
+      required: [period]
+    BackfillRequest:
+      type: object
+      properties:
+        period: { type: string }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        storeIds: { type: array, items: { type: string }, nullable: true }
+      required: [period, from, to]
+    PipelineRunResponse:
+      type: object
+      properties:
+        id: { type: string }
+        period: { type: string }
+        periodStart: { type: string, format: date-time }
+        periodEnd: { type: string, format: date-time }
+        storeIds: { type: array, items: { type: string } }
+        status: { type: string }
+        startedAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time, nullable: true }
+        error: { type: string, nullable: true }
+    SalesAggregateResponse:
+      type: object
+      properties:
+        storeId: { type: string }
+        period: { type: string }
+        periodStart: { type: string, format: date-time }
+        periodEnd: { type: string, format: date-time }
+        orderCount: { type: integer }
+        itemsSold: { type: integer }
+        grossSales: { type: number }
+        discountTotal: { type: number }
+        taxCollected: { type: number }
+        refundsTotal: { type: number }
+        netSales: { type: number }
+        generatedAt: { type: string, format: date-time }
+    InventoryAggregateResponse:
+      type: object
+      properties:
+        storeId: { type: string }
+        period: { type: string }
+        periodStart: { type: string, format: date-time }
+        periodEnd: { type: string, format: date-time }
+        stockCountsPerformed: { type: integer }
+        totalVarianceUnits: { type: integer }
+        overageCount: { type: integer }
+        shortageCount: { type: integer }
+        generatedAt: { type: string, format: date-time }
+    ProductSalesSummaryResponse:
+      type: object
+      properties:
+        productId: { type: string }
+        productName: { type: string }
+        quantitySold: { type: integer }
+        revenue: { type: number }
+    CashOnHandResponse:
+      type: object
+      properties:
+        storeId: { type: string }
+        openShiftCount: { type: integer }
+        totalExpectedCash: { type: number }
+        asOf: { type: string, format: date-time }
+    StaffAggregateResponse:
+      type: object
+      properties:
+        storeId: { type: string }
+        period: { type: string }
+        periodStart: { type: string, format: date-time }
+        periodEnd: { type: string, format: date-time }
+        shiftsWorked: { type: integer }
+        distinctCashiers: { type: integer }
+        totalCashVariance: { type: number }
+        shiftsWithNote: { type: integer }
+        generatedAt: { type: string, format: date-time }
+
+    # ---- Finance Reports ----
+    CreateScheduleRequest:
+      type: object
+      properties:
+        storeId: { type: string }
+        type: { type: string }
+        format: { type: string }
+        timezone: { type: string }
+        frequency: { type: string }
+        recipients: { type: array, items: { type: string } }
+      required: [storeId, type, format, timezone, frequency, recipients]
+    ScheduledReportResponse:
+      type: object
+      properties:
+        id: { type: string }
+        storeId: { type: string }
+        type: { type: string }
+        format: { type: string }
+        timezone: { type: string }
+        frequency: { type: string }
+        recipients: { type: array, items: { type: string } }
+        createdBy: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        nextRunAt: { type: string, format: date-time }
+        lastRunAt: { type: string, format: date-time, nullable: true }
+        lastRunStatus: { type: string, nullable: true }
+    ScheduledReportRunResponse:
+      type: object
+      properties:
+        id: { type: string }
+        scheduleId: { type: string }
+        periodStart: { type: string, format: date-time }
+        periodEnd: { type: string, format: date-time }
+        runAt: { type: string, format: date-time }
+        status: { type: string }
+        deliveredTo: { type: array, items: { type: string } }
+        failedRecipients: { type: array, items: { type: string } }
+
+    # ---- Backups ----
+    BackupMetadataResponse:
+      type: object
+      properties:
+        id: { type: string }
+        createdAt: { type: string, format: date-time }
+        sizeBytes: { type: integer, format: int64 }
+        checksumSha256: { type: string }
+        status: { type: string }
+        validated: { type: boolean }
+        errorMessage: { type: string, nullable: true }
+    RestoreRequest:
+      type: object
+      properties: { targetJdbcUrl: { type: string } }
+      required: [targetJdbcUrl]
+    RestoreDrillResultResponse:
+      type: object
+      properties:
+        id: { type: string }
+        backupId: { type: string }
+        targetJdbcUrl: { type: string }
+        startedAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time }
+        durationMillis: { type: integer, format: int64 }
+        tableRowCounts: { type: object, additionalProperties: { type: integer, format: int64 } }
+        rowCountsMatched: { type: boolean }
+        status: { type: string }
+        errorMessage: { type: string, nullable: true }

@@ -70,3 +70,12 @@ tasks.test {
         failOnPassedAfterRetry.set(false)
     }
 }
+
+// openapi.yaml lives at the repo root (readable on GitHub like the other root-level docs) rather
+// than under src/main/resources - copying it in here at build time means DocsRoutes.kt can serve
+// it from the classpath in every environment (including the production fat JAR, which has no repo
+// root to read from at runtime) with zero risk of a resources/ copy drifting out of sync with the
+// one humans actually read.
+tasks.named<ProcessResources>("processResources") {
+    from(rootProject.file("openapi.yaml"))
+}
