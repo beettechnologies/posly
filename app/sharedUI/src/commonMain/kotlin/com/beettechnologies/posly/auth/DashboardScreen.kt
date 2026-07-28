@@ -32,6 +32,7 @@ fun DashboardScreen(
     onManageShift: () -> Unit,
     onManageUsers: () -> Unit,
     onImportProducts: () -> Unit,
+    onImportSales: () -> Unit,
     onManageDashboard: () -> Unit,
     onFinanceReports: () -> Unit,
     onManageFeatureFlags: () -> Unit,
@@ -78,6 +79,9 @@ fun DashboardScreen(
         }
         Button(onClick = onImportProducts, modifier = Modifier.padding(bottom = 12.dp)) {
             Text("Import Products")
+        }
+        Button(onClick = onImportSales, modifier = Modifier.padding(bottom = 12.dp)) {
+            Text("Import Historical Sales")
         }
         Button(onClick = onManageDashboard, modifier = Modifier.padding(bottom = 12.dp)) {
             Text("Manager Dashboard")

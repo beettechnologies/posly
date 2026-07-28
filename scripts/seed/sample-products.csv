@@ -1,0 +1,4 @@
+sku,name,price,description,taxCategory,barcode,category,inStock
+DEMO-WIDGET-001,Demo Widget,9.99,A sample widget for demo/seed data,STANDARD,,Demo,true
+DEMO-GADGET-002,Demo Gadget,14.50,A sample gadget for demo/seed data,STANDARD,,Demo,true
+DEMO-GIZMO-003,Demo Gizmo,4.25,A sample gizmo for demo/seed data,STANDARD,,Demo,true

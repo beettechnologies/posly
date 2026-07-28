@@ -156,6 +156,11 @@ class OrderService(
         OrdersTable.selectAll().where { OrdersTable.id eq id }.singleOrNull()?.let { rowToOrder(it) }
     }
 
+    /** Looks an order up by its checkout idempotency key - lets a caller (e.g. a migration import) detect a re-run without keeping its own ledger. */
+    fun getOrderByIdempotencyKey(key: String): Order? = transaction {
+        OrdersTable.selectAll().where { OrdersTable.idempotencyKey eq key }.singleOrNull()?.let { rowToOrder(it) }
+    }
+
     fun count(): Int = transaction {
         OrdersTable.selectAll().count().toInt()
     }

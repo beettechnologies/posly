@@ -23,6 +23,8 @@ import com.beettechnologies.posly.cart.configureOrderRoutes
 import com.beettechnologies.posly.capacity.HeavyAnalyticsRateLimit
 import com.beettechnologies.posly.catalog.ProductImportService
 import com.beettechnologies.posly.catalog.configureProductImportRoutes
+import com.beettechnologies.posly.migration.SalesImportService
+import com.beettechnologies.posly.migration.configureSalesImportRoutes
 import com.beettechnologies.posly.db.DatabaseFactory
 import com.beettechnologies.posly.devices.DeviceHealthStatus
 import com.beettechnologies.posly.devices.DeviceRegistryService
@@ -144,6 +146,7 @@ fun Application.module() {
     )
     val offlineSyncService = OfflineSyncService(deviceRegistryService, productService, cartService, orderService, storeService)
     val productImportService = ProductImportService(productService, importScope = this)
+    val salesImportService = SalesImportService(productService, storeService, orderService, importScope = this)
     val printerRegistryService = PrinterRegistryService()
     val printService = PrintService(orderService, printerRegistryService, SimulatorPrintGateway(), storeService)
     // Scraped on every /metrics poll, not cached: PoslyTerminalsOffline (see
@@ -248,6 +251,7 @@ fun Application.module() {
     configureDeviceRoutes(deviceRegistryService)
     configureProductRoutes(productService)
     configureProductImportRoutes(productImportService)
+    configureSalesImportRoutes(salesImportService)
     configureSearchRoutes(productService)
     configureStoreRoutes(storeService)
     configureTaxProfileRoutes(taxProfileService)

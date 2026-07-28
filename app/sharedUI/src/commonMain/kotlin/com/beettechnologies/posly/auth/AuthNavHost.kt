@@ -22,6 +22,7 @@ import com.beettechnologies.posly.admin.FeatureFlagFormScreen
 import com.beettechnologies.posly.admin.FeatureFlagListScreen
 import com.beettechnologies.posly.admin.FinanceReportsScreen
 import com.beettechnologies.posly.admin.ImportWizardScreen
+import com.beettechnologies.posly.admin.SalesImportWizardScreen
 import com.beettechnologies.posly.admin.SsoConfigScreen
 import com.beettechnologies.posly.admin.StoreFormScreen
 import com.beettechnologies.posly.admin.StoreListScreen
@@ -61,6 +62,7 @@ private const val ROUTE_USER_FORM = "userForm"
 private const val ROUTE_USER_FORM_EDIT = "userForm/{id}"
 private const val ROUTE_SSO_CONFIG = "ssoConfig"
 private const val ROUTE_IMPORT_PRODUCTS = "importProducts"
+private const val ROUTE_IMPORT_SALES = "importSales"
 private const val ROUTE_MANAGER_DASHBOARD = "managerDashboard"
 private const val ROUTE_FINANCE_REPORTS = "financeReports"
 private const val ROUTE_TRANSACTION_LIST = "transactionList"
@@ -169,6 +171,7 @@ fun AuthNavHost(
                 onManageShift = { navController.navigate(ROUTE_SHIFT) },
                 onManageUsers = { navController.navigate(ROUTE_USERS) },
                 onImportProducts = { navController.navigate(ROUTE_IMPORT_PRODUCTS) },
+                onImportSales = { navController.navigate(ROUTE_IMPORT_SALES) },
                 onManageDashboard = { navController.navigate(ROUTE_MANAGER_DASHBOARD) },
                 onFinanceReports = { navController.navigate(ROUTE_FINANCE_REPORTS) },
                 onManageFeatureFlags = { navController.navigate(ROUTE_FEATURE_FLAGS) },
@@ -262,6 +265,9 @@ fun AuthNavHost(
         }
         composable(ROUTE_IMPORT_PRODUCTS) {
             ImportWizardScreen(onBack = { navController.popBackStack() })
+        }
+        composable(ROUTE_IMPORT_SALES) {
+            SalesImportWizardScreen(onBack = { navController.popBackStack() })
         }
         composable(ROUTE_MANAGER_DASHBOARD) {
             ManagerDashboardScreen(

@@ -8,6 +8,7 @@ import com.beettechnologies.posly.auth.platformAuthModule
 import com.beettechnologies.posly.auth.sharedUiModule
 import com.beettechnologies.posly.cart.cartModule
 import com.beettechnologies.posly.catalog.importModule
+import com.beettechnologies.posly.migration.salesImportModule
 import com.beettechnologies.posly.devices.devicesModule
 import com.beettechnologies.posly.finance.financeReportModule
 import com.beettechnologies.posly.flags.featureFlagsModule
@@ -37,6 +38,7 @@ fun main() {
             shiftsModule,
             usersModule,
             importModule,
+            salesImportModule,
             reportingModule,
             financeReportModule,
             featureFlagsModule,
