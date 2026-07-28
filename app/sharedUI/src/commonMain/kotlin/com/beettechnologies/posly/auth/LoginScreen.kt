@@ -25,6 +25,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.beettechnologies.posly.accessibility.statusMessage
 import org.koin.compose.viewmodel.koinViewModel
 
 object LoginScreenTags {
@@ -89,7 +90,7 @@ fun LoginScreen(
             Text(
                 text = uiState.errorMessage.orEmpty(),
                 color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.fillMaxWidth().padding(top = 12.dp).testTag(LoginScreenTags.ERROR_TEXT)
+                modifier = Modifier.fillMaxWidth().padding(top = 12.dp).testTag(LoginScreenTags.ERROR_TEXT).statusMessage()
             )
         }
 

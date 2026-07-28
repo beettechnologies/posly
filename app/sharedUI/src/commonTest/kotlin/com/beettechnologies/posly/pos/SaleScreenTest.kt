@@ -1,6 +1,8 @@
 package com.beettechnologies.posly.pos
 
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextEquals
@@ -8,6 +10,9 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.runComposeUiTest
+import com.beettechnologies.posly.accessibility.hasLiveRegion
+import com.beettechnologies.posly.accessibility.hasOnClickLabel
+import com.beettechnologies.posly.accessibility.hasRole
 import com.beettechnologies.posly.cart.AddCartItemOutcome
 import com.beettechnologies.posly.cart.CartApi
 import com.beettechnologies.posly.cart.CartItemResponse
@@ -28,6 +33,7 @@ import com.beettechnologies.posly.devices.DeviceCredentialsStore
 import com.beettechnologies.posly.products.ProductSearchApi
 import com.beettechnologies.posly.products.SearchOutcome
 import com.beettechnologies.posly.products.SearchResponse
+import com.beettechnologies.posly.products.SearchResultItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -313,5 +319,72 @@ class SaleScreenTest {
 
         onNodeWithTag(SaleScreenTags.TAX_LINE_PREFIX + 0).assertDoesNotExist()
         onNodeWithTag(SaleScreenTags.TAX_TOTAL_TEXT).assertTextEquals("Tax: \$0.00")
+    }
+
+    // -------------------------------------------------------------------------
+    // Accessibility
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `a search suggestion is announced as a button with a descriptive action label`() = runComposeUiTest {
+        val cart = screenCart(items = emptyList())
+        val searchApi = object : ProductSearchApi {
+            override suspend fun search(
+                query: String?,
+                barcode: String?,
+                category: String?,
+                inStock: Boolean?,
+                page: Int,
+                size: Int
+            ): SearchOutcome = SearchOutcome.Success(
+                SearchResponse(
+                    results = listOf(SearchResultItem(id = "p-1", sku = "SKU-1", name = "Widget", price = 9.99)),
+                    page = 0, size = 20, total = 1
+                )
+            )
+        }
+        val viewModel = SaleViewModel(
+            FakeScreenDeviceCredentialsStore(),
+            FakeScreenCartSessionStore(cartId = cart.id),
+            FakeScreenCartApi(cart),
+            searchApi,
+            debounceMillis = 0
+        )
+
+        setContent { SaleScreen(onBack = {}, viewModel = viewModel) }
+        onNodeWithTag(SaleScreenTags.SEARCH_FIELD).performTextInput("Widget")
+        waitForIdle()
+
+        onNodeWithTag(SaleScreenTags.SUGGESTION_PREFIX + "p-1")
+            .assert(hasRole(Role.Button))
+            .assert(hasOnClickLabel("Add Widget to cart"))
+    }
+
+    @Test
+    fun `the search error message is a live region so it's announced without navigating to it`() = runComposeUiTest {
+        val cart = screenCart(items = emptyList())
+        val searchApi = object : ProductSearchApi {
+            override suspend fun search(
+                query: String?,
+                barcode: String?,
+                category: String?,
+                inStock: Boolean?,
+                page: Int,
+                size: Int
+            ): SearchOutcome = SearchOutcome.NetworkError("Search is temporarily unavailable")
+        }
+        val viewModel = SaleViewModel(
+            FakeScreenDeviceCredentialsStore(),
+            FakeScreenCartSessionStore(cartId = cart.id),
+            FakeScreenCartApi(cart),
+            searchApi,
+            debounceMillis = 0
+        )
+
+        setContent { SaleScreen(onBack = {}, viewModel = viewModel) }
+        onNodeWithTag(SaleScreenTags.SEARCH_FIELD).performTextInput("Widget")
+        waitForIdle()
+
+        onNodeWithTag(SaleScreenTags.ERROR_TEXT).assert(hasLiveRegion())
     }
 }

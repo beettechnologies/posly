@@ -24,6 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.beettechnologies.posly.accessibility.statusMessage
 import org.koin.compose.viewmodel.koinViewModel
 
 object RefundScreenTags {
@@ -88,7 +89,7 @@ fun RefundScreen(
             Text(
                 text = uiState.loadError.orEmpty(),
                 color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.padding(top = 12.dp).testTag(RefundScreenTags.LOAD_ERROR_TEXT)
+                modifier = Modifier.padding(top = 12.dp).testTag(RefundScreenTags.LOAD_ERROR_TEXT).statusMessage()
             )
         }
 
@@ -107,7 +108,7 @@ fun RefundScreen(
                 Text(
                     text = if (order.status == "REFUNDED") "Refund complete" else "Refund recorded - order is now partially refunded",
                     color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(top = 8.dp).testTag(RefundScreenTags.OUTCOME_TEXT)
+                    modifier = Modifier.padding(top = 8.dp).testTag(RefundScreenTags.OUTCOME_TEXT).statusMessage()
                 )
             }
 
@@ -179,7 +180,7 @@ fun RefundScreen(
                 Text(
                     text = "The card refund could not be completed. Enter a reason and process it manually instead.",
                     color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(top = 8.dp).testTag(RefundScreenTags.CARD_FAILED_TEXT)
+                    modifier = Modifier.padding(top = 8.dp).testTag(RefundScreenTags.CARD_FAILED_TEXT).statusMessage()
                 )
                 TextButton(
                     onClick = viewModel::useManualFallback,
@@ -193,7 +194,7 @@ fun RefundScreen(
                 Text(
                     text = uiState.errorMessage.orEmpty(),
                     color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(top = 8.dp).testTag(RefundScreenTags.ERROR_TEXT)
+                    modifier = Modifier.padding(top = 8.dp).testTag(RefundScreenTags.ERROR_TEXT).statusMessage()
                 )
             }
 

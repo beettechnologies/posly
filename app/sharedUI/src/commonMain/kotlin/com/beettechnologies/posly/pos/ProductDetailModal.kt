@@ -1,11 +1,11 @@
 package com.beettechnologies.posly.pos
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -20,6 +20,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.beettechnologies.posly.cart.CartResponse
@@ -85,12 +86,21 @@ fun ProductDetailModal(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clickable(enabled = !isUnavailable) { viewModel.selectOption(modifier.id, option) }
+                                    // Canonical Compose a11y pattern for a selectable row that also contains its own
+                                    // indicator: the ROW owns the click/role/selected semantics (one accessible
+                                    // control per option), and the RadioButton's own onClick is nulled out below so
+                                    // it's purely a visual indicator, not a second, redundant focus/announcement target.
+                                    .selectable(
+                                        selected = isSelected,
+                                        enabled = !isUnavailable,
+                                        role = Role.RadioButton,
+                                        onClick = { viewModel.selectOption(modifier.id, option) }
+                                    )
                                     .testTag(ProductDetailModalTags.OPTION_PREFIX + modifier.id + "_" + option)
                             ) {
                                 RadioButton(
                                     selected = isSelected,
-                                    onClick = { viewModel.selectOption(modifier.id, option) },
+                                    onClick = null,
                                     enabled = !isUnavailable
                                 )
                                 Column {

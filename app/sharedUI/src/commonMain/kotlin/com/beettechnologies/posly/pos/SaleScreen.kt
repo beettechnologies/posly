@@ -32,10 +32,13 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.beettechnologies.posly.accessibility.statusMessage
 import com.beettechnologies.posly.format.formatCurrencyAmount
 import com.beettechnologies.posly.products.SearchResultItem
 import org.koin.compose.viewmodel.koinViewModel
@@ -115,14 +118,14 @@ fun SaleScreen(
                     Text(
                         text = uiState.errorMessage.orEmpty(),
                         color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.padding(top = 12.dp).testTag(SaleScreenTags.ERROR_TEXT)
+                        modifier = Modifier.padding(top = 12.dp).testTag(SaleScreenTags.ERROR_TEXT).statusMessage()
                     )
                 }
 
                 if (uiState.infoMessage != null) {
                     Text(
                         text = uiState.infoMessage.orEmpty(),
-                        modifier = Modifier.padding(top = 12.dp).testTag(SaleScreenTags.INFO_MESSAGE_TEXT)
+                        modifier = Modifier.padding(top = 12.dp).testTag(SaleScreenTags.INFO_MESSAGE_TEXT).statusMessage()
                     )
                 }
 
@@ -174,7 +177,7 @@ fun SaleScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text("Removed \"${voidedItem.productName}\"")
+                            Text("Removed \"${voidedItem.productName}\"", modifier = Modifier.statusMessage())
                             TextButton(
                                 onClick = viewModel::undoVoid,
                                 modifier = Modifier.testTag(SaleScreenTags.UNDO_BUTTON)
@@ -353,7 +356,7 @@ private fun SuggestionRow(item: SearchResultItem, currencyCode: String, localeTa
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp)
-            .clickable(onClick = onClick)
+            .clickable(onClickLabel = "Add ${item.name} to cart", role = Role.Button, onClick = onClick)
             .testTag(SaleScreenTags.SUGGESTION_PREFIX + item.id)
     ) {
         Row(

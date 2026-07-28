@@ -20,6 +20,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.koin.compose.viewmodel.koinViewModel
@@ -71,7 +72,7 @@ fun TaxProfileListScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 4.dp)
-                        .clickable { onEditProfile(profile.id) }
+                        .clickable(onClickLabel = "Edit ${profile.name}", role = Role.Button) { onEditProfile(profile.id) }
                         .testTag(TaxProfileListScreenTags.ITEM_PREFIX + profile.id)
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {

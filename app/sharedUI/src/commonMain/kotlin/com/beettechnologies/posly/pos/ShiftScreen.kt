@@ -31,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.beettechnologies.posly.accessibility.statusMessage
 import org.koin.compose.viewmodel.koinViewModel
 
 object ShiftScreenTags {
@@ -82,7 +83,7 @@ fun ShiftScreen(
             Text(
                 text = uiState.errorMessage.orEmpty(),
                 color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.padding(top = 12.dp).testTag(ShiftScreenTags.ERROR_TEXT)
+                modifier = Modifier.padding(top = 12.dp).testTag(ShiftScreenTags.ERROR_TEXT).statusMessage()
             )
         }
 
@@ -184,7 +185,7 @@ private fun CloseShiftForm(uiState: ShiftUiState, viewModel: ShiftViewModel) {
                 text = "Variance of $${requirement.variance} exceeds the $${requirement.threshold} threshold - " +
                     "add a note above, or have a manager close this shift.",
                 color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.padding(top = 8.dp).testTag(ShiftScreenTags.OVERRIDE_REQUIRED_TEXT)
+                modifier = Modifier.padding(top = 8.dp).testTag(ShiftScreenTags.OVERRIDE_REQUIRED_TEXT).statusMessage()
             )
         }
 

@@ -17,6 +17,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.beettechnologies.posly.accessibility.statusMessage
 import org.koin.compose.viewmodel.koinViewModel
 
 @Composable
@@ -49,7 +50,7 @@ fun MfaScreen(viewModel: MfaViewModel = koinViewModel()) {
             Text(
                 text = uiState.errorMessage.orEmpty(),
                 color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.fillMaxWidth().padding(top = 12.dp)
+                modifier = Modifier.fillMaxWidth().padding(top = 12.dp).statusMessage()
             )
         }
 

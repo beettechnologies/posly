@@ -20,6 +20,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.koin.compose.viewmodel.koinViewModel
@@ -79,7 +80,7 @@ fun UserListScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 4.dp)
-                        .clickable { onEditUser(user.id) }
+                        .clickable(onClickLabel = "Edit ${user.username}", role = Role.Button) { onEditUser(user.id) }
                         .testTag(UserListScreenTags.ITEM_PREFIX + user.id)
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {

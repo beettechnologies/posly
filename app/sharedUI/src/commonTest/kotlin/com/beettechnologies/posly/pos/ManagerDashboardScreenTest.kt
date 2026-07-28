@@ -1,10 +1,14 @@
 package com.beettechnologies.posly.pos
 
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.runComposeUiTest
+import com.beettechnologies.posly.accessibility.hasOnClickLabel
+import com.beettechnologies.posly.accessibility.hasRole
 import com.beettechnologies.posly.reporting.CashOnHandOutcome
 import com.beettechnologies.posly.reporting.CashOnHandResponse
 import com.beettechnologies.posly.reporting.ProductSalesSummaryResponse
@@ -140,5 +144,27 @@ class ManagerDashboardScreenTest {
         waitForIdle()
 
         assertEquals(listOf("store-1", "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z", "product-1", "Widget"), drillDownArgs)
+    }
+
+    // -------------------------------------------------------------------------
+    // Accessibility
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `drill-down cards are announced as buttons with a descriptive action label`() = runComposeUiTest {
+        val viewModel = ManagerDashboardViewModel(FakeDashboardScreenReportingApi(), FakeDashboardScreenStoreApi())
+
+        setContent { ManagerDashboardScreen(onBack = {}, onDrillDown = { _, _, _, _, _ -> }, viewModel = viewModel) }
+        waitForIdle()
+
+        onNodeWithTag(ManagerDashboardScreenTags.SALES_CARD)
+            .assert(hasRole(Role.Button))
+            .assert(hasOnClickLabel("View today's sales transactions"))
+        onNodeWithTag(ManagerDashboardScreenTags.TRANSACTIONS_CARD)
+            .assert(hasRole(Role.Button))
+            .assert(hasOnClickLabel("View today's transactions"))
+        onNodeWithTag(ManagerDashboardScreenTags.TOP_PRODUCT_ROW_PREFIX + "product-1")
+            .assert(hasRole(Role.Button))
+            .assert(hasOnClickLabel("View transactions for Widget"))
     }
 }

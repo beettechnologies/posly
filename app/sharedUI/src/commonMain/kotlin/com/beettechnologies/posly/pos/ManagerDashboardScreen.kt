@@ -27,8 +27,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.beettechnologies.posly.accessibility.statusMessage
 import org.koin.compose.viewmodel.koinViewModel
 
 object ManagerDashboardScreenTags {
@@ -109,7 +111,7 @@ fun ManagerDashboardScreen(
             Text(
                 text = uiState.errorMessage.orEmpty(),
                 color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.fillMaxWidth().padding(top = 12.dp).testTag(ManagerDashboardScreenTags.ERROR_TEXT)
+                modifier = Modifier.fillMaxWidth().padding(top = 12.dp).testTag(ManagerDashboardScreenTags.ERROR_TEXT).statusMessage()
             )
         }
 
@@ -120,7 +122,10 @@ fun ManagerDashboardScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 16.dp)
-                    .clickable { onDrillDown(storeId, sales.periodStart, sales.periodEnd, null, null) }
+                    .clickable(
+                        onClickLabel = "View today's sales transactions",
+                        role = Role.Button
+                    ) { onDrillDown(storeId, sales.periodStart, sales.periodEnd, null, null) }
                     .testTag(ManagerDashboardScreenTags.SALES_CARD)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
@@ -134,7 +139,10 @@ fun ManagerDashboardScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 12.dp)
-                    .clickable { onDrillDown(storeId, sales.periodStart, sales.periodEnd, null, null) }
+                    .clickable(
+                        onClickLabel = "View today's transactions",
+                        role = Role.Button
+                    ) { onDrillDown(storeId, sales.periodStart, sales.periodEnd, null, null) }
                     .testTag(ManagerDashboardScreenTags.TRANSACTIONS_CARD)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
@@ -153,7 +161,10 @@ fun ManagerDashboardScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 2.dp)
-                        .clickable { onDrillDown(storeId, sales.periodStart, sales.periodEnd, product.productId, product.productName) }
+                        .clickable(
+                            onClickLabel = "View transactions for ${product.productName}",
+                            role = Role.Button
+                        ) { onDrillDown(storeId, sales.periodStart, sales.periodEnd, product.productId, product.productName) }
                         .testTag(ManagerDashboardScreenTags.TOP_PRODUCT_ROW_PREFIX + product.productId)
                 ) {
                     Row(

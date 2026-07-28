@@ -1,10 +1,14 @@
 package com.beettechnologies.posly.admin
 
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.runComposeUiTest
+import com.beettechnologies.posly.accessibility.hasOnClickLabel
+import com.beettechnologies.posly.accessibility.hasRole
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -60,6 +64,21 @@ class UserListScreenTest {
         onNodeWithTag(UserListScreenTags.SSO_CONFIG_BUTTON).performClick()
         waitForIdle()
         kotlin.test.assertTrue(ssoConfigured)
+    }
+
+    @Test
+    fun `a user row is announced as a button with a descriptive edit action label`() = runComposeUiTest {
+        val users = mutableListOf(testUser("u1", "admin", listOf("ADMIN")))
+        val viewModel = UserListViewModel(FakeUserApi(users))
+
+        setContent {
+            UserListScreen(onInviteUser = {}, onEditUser = {}, onConfigureSso = {}, onBack = {}, viewModel = viewModel)
+        }
+        waitForIdle()
+
+        onNodeWithTag(UserListScreenTags.ITEM_PREFIX + "u1")
+            .assert(hasRole(Role.Button))
+            .assert(hasOnClickLabel("Edit admin"))
     }
 
     @Test

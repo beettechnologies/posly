@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.beettechnologies.posly.accessibility.statusMessage
 import org.koin.compose.viewmodel.koinViewModel
 
 object TransactionListScreenTags {
@@ -70,7 +71,7 @@ fun TransactionListScreen(
             Text(
                 text = uiState.errorMessage.orEmpty(),
                 color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.padding(top = 12.dp).testTag(TransactionListScreenTags.ERROR_TEXT)
+                modifier = Modifier.padding(top = 12.dp).testTag(TransactionListScreenTags.ERROR_TEXT).statusMessage()
             )
         }
 

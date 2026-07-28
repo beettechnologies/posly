@@ -20,6 +20,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.koin.compose.viewmodel.koinViewModel
@@ -70,7 +71,7 @@ fun StoreListScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 4.dp)
-                        .clickable { onEditStore(store.id) }
+                        .clickable(onClickLabel = "Edit ${store.name}", role = Role.Button) { onEditStore(store.id) }
                         .testTag(StoreListScreenTags.ITEM_PREFIX + store.id)
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {

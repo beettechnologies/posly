@@ -52,6 +52,56 @@ jobs:
             **/build/test-results/
           retention-days: 7
 
+  android-checks:
+    name: Android A11y Tests & Bundle Size Budget
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: temurin
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install required SDK platform and build-tools
+        run: sdkmanager "platforms;android-${{ env.COMPILE_SDK }}" "build-tools;${{ env.BUILD_TOOLS_VERSION }}"
+        env:
+          COMPILE_SDK: '36'
+          BUILD_TOOLS_VERSION: '36.0.0'
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      # app:sharedUI (the Compose UI module with every POS screen) is only included in the
+      # Gradle build when ANDROID_HOME is set (see settings.gradle.kts) - without this job, its
+      # tests, including the accessibility regression suite added alongside PERFORMANCE.md /
+      # ACCESSIBILITY.md, never ran in CI at all.
+      - name: Run sharedUI tests (includes accessibility regression suite)
+        run: ./gradlew :app:sharedUI:jvmTest --no-daemon
+
+      # See PERFORMANCE.md for how the budget was derived and app/androidApp/build.gradle.kts
+      # for the task itself - this is the native equivalent of a web app's Lighthouse/bundle-size
+      # CI gate.
+      - name: Enforce release APK size budget
+        run: ./gradlew :app:androidApp:checkApkSizeBudget --no-daemon
+
+      - name: Upload Android test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-test-reports
+          path: |
+            app/sharedUI/build/reports/tests/
+            app/sharedUI/build/test-results/
+          retention-days: 7
+
   security-scan:
     name: Security Scan
     runs-on: ubuntu-latest
@@ -116,15 +166,15 @@ jobs:
     name: Build Status
     runs-on: ubuntu-latest
     permissions: {}
-    needs: [lint-and-test, security-scan]
+    needs: [lint-and-test, android-checks, security-scan]
     if: always()
     steps:
       - name: All checks passed
-        if: ${{ needs.lint-and-test.result == 'success' && needs.security-scan.result == 'success' }}
+        if: ${{ needs.lint-and-test.result == 'success' && needs.android-checks.result == 'success' && needs.security-scan.result == 'success' }}
         run: echo "All CI checks passed."
 
       - name: Fail if any check failed
-        if: ${{ needs.lint-and-test.result == 'failure' || needs.security-scan.result == 'failure' }}
+        if: ${{ needs.lint-and-test.result == 'failure' || needs.android-checks.result == 'failure' || needs.security-scan.result == 'failure' }}
         run: |
           echo "One or more CI checks failed."
           exit 1
