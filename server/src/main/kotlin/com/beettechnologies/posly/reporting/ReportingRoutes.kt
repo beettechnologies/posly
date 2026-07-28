@@ -1,5 +1,7 @@
 package com.beettechnologies.posly.reporting
 
+import com.beettechnologies.posly.apikeys.ApiKeyScope
+import com.beettechnologies.posly.apikeys.withRoleOrScope
 import com.beettechnologies.posly.auth.ErrorResponse
 import com.beettechnologies.posly.capacity.HeavyAnalyticsRateLimit
 import com.beettechnologies.posly.capacity.blockedByHeavyAnalyticsKillSwitch
@@ -81,7 +83,17 @@ fun Application.configureReportingRoutes(reportingService: ReportingService, fea
                         if (run == null) call.respond(HttpStatusCode.NotFound, ErrorResponse("Pipeline run not found"))
                         else call.respond(HttpStatusCode.OK, run.toResponse())
                     }
+                }
+            }
+        }
 
+        // Business-data reads: accept a user JWT (ADMIN/MANAGER) OR an API key with REPORTS_READ
+        // scope - see API_KEYS.md. Deliberately split from the pipeline run/backfill/listing
+        // endpoints above, which stay JWT-only (pipeline management, not a business-data read a
+        // 3rd-party integration should get via an API key).
+        authenticate("jwt-auth", "api-key-auth") {
+            route("/reports") {
+                withRoleOrScope(setOf(Role.ADMIN, Role.MANAGER), ApiKeyScope.REPORTS_READ) {
                     get("/sales/realtime") {
                         val storeId = call.request.queryParameters["storeId"] ?: run {
                             call.respond(HttpStatusCode.BadRequest, ErrorResponse("storeId query parameter is required"))

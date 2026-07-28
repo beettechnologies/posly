@@ -1,6 +1,7 @@
 package com.beettechnologies.posly
 
 import android.app.Application
+import com.beettechnologies.posly.apikeys.apiKeysModule
 import com.beettechnologies.posly.auth.authModule
 import com.beettechnologies.posly.auth.platformAuthModule
 import com.beettechnologies.posly.auth.sharedUiModule
@@ -41,7 +42,8 @@ class PoslyApplication : Application() {
                 importModule,
                 reportingModule,
                 financeReportModule,
-                featureFlagsModule
+                featureFlagsModule,
+                apiKeysModule
             )
         }
     }

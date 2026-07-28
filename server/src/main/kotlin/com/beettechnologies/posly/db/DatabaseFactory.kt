@@ -42,7 +42,9 @@ object DatabaseFactory {
                 ShiftsTable,
                 ShiftAuditEventsTable,
                 FeatureFlagsTable,
-                AuditTable
+                AuditTable,
+                ApiKeysTable,
+                ApiKeyUsageTable
             )
         }
     }

@@ -2,6 +2,7 @@ package com.beettechnologies.posly
 
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
+import com.beettechnologies.posly.apikeys.apiKeysModule
 import com.beettechnologies.posly.auth.authModule
 import com.beettechnologies.posly.auth.platformAuthModule
 import com.beettechnologies.posly.auth.sharedUiModule
@@ -38,7 +39,8 @@ fun main() {
             importModule,
             reportingModule,
             financeReportModule,
-            featureFlagsModule
+            featureFlagsModule,
+            apiKeysModule
         )
     }
 

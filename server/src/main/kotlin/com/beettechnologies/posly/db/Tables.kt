@@ -171,3 +171,30 @@ object AuditTable : Table("audit_log") {
     val detail = text("detail").nullable()
     override val primaryKey = PrimaryKey(id)
 }
+
+object ApiKeysTable : Table("api_keys") {
+    val id = varchar("id", 36)
+    val name = varchar("name", 200)
+    val keyPrefix = varchar("key_prefix", 20)
+    val secretHash = varchar("secret_hash", 100)
+    val scopes = jsonb<List<String>>("scopes", json, ListSerializer(String.serializer()), true)
+    val status = varchar("status", 20)
+    val createdAt = timestamp("created_at")
+    val updatedAt = timestamp("updated_at")
+    val createdBy = varchar("created_by", 36).nullable()
+    val lastUsedAt = timestamp("last_used_at").nullable()
+    val revokedAt = timestamp("revoked_at").nullable()
+    val revokedBy = varchar("revoked_by", 36).nullable()
+    override val primaryKey = PrimaryKey(id)
+}
+
+/** One row per API-key-authenticated request - see [com.beettechnologies.posly.apikeys.ApiKeyService.recordUsage]. */
+object ApiKeyUsageTable : Table("api_key_usage") {
+    val id = varchar("id", 36)
+    val apiKeyId = varchar("api_key_id", 36)
+    val method = varchar("method", 10)
+    val path = varchar("path", 500)
+    val statusCode = integer("status_code")
+    val timestamp = timestamp("timestamp")
+    override val primaryKey = PrimaryKey(id)
+}

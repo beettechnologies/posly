@@ -1,5 +1,7 @@
 package com.beettechnologies.posly
 
+import com.beettechnologies.posly.db.ApiKeyUsageTable
+import com.beettechnologies.posly.db.ApiKeysTable
 import com.beettechnologies.posly.db.AuditTable
 import com.beettechnologies.posly.db.FeatureFlagsTable
 import com.beettechnologies.posly.db.OrderEventsTable
@@ -38,7 +40,7 @@ object TestDatabase {
             SchemaUtils.create(
                 StoresTable, StoreLogosTable, TaxProfilesTable, ProductsTable, ProductImagesTable,
                 UsersTable, OrdersTable, OrderEventsTable, ShiftsTable, ShiftAuditEventsTable,
-                FeatureFlagsTable, AuditTable
+                FeatureFlagsTable, AuditTable, ApiKeysTable, ApiKeyUsageTable
             )
         }
     }
@@ -57,6 +59,8 @@ object TestDatabase {
             StoresTable.deleteAll()
             FeatureFlagsTable.deleteAll()
             AuditTable.deleteAll()
+            ApiKeyUsageTable.deleteAll()
+            ApiKeysTable.deleteAll()
         }
     }
 }

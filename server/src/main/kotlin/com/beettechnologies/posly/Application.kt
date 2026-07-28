@@ -1,5 +1,8 @@
 package com.beettechnologies.posly
 
+import com.beettechnologies.posly.apikeys.ApiKeyService
+import com.beettechnologies.posly.apikeys.configureApiKeyRoutes
+import com.beettechnologies.posly.apikeys.installApiKeyUsageLogging
 import com.beettechnologies.posly.auth.AuthService
 import com.beettechnologies.posly.auth.ErrorResponse
 import com.beettechnologies.posly.auth.JwtService
@@ -162,6 +165,7 @@ fun Application.module() {
     val backupService = BackupService(jdbcUrl, backupDirectory, scope = this)
     val restoreService = RestoreService(backupService, productionJdbcUrl = jdbcUrl)
     val featureFlagService = FeatureFlagService(meterRegistry)
+    val apiKeyService = ApiKeyService()
     val auditConfig = environment.config.config("audit")
     val auditRetentionService = AuditRetentionService(
         archiveDirectory = auditConfig.property("archiveDirectory").getString(),
@@ -216,7 +220,19 @@ fun Application.module() {
                 call.respond(HttpStatusCode.Unauthorized, ErrorResponse("Missing or invalid access token"))
             }
         }
+
+        // For the small set of read endpoints 3rd-party integrations use (see API_KEYS.md) -
+        // routes that accept this alongside "jwt-auth" via authenticate("jwt-auth", "api-key-auth")
+        // resolve with FirstSuccessful semantics, so a request authenticates as EITHER a user or
+        // an API key, never both. See apikeys/ScopeAuth.kt's withRoleOrScope for the matching
+        // authorization check.
+        bearer("api-key-auth") {
+            realm = "posly"
+            authenticate { credential -> apiKeyService.authenticate(credential.token) }
+        }
     }
+
+    installApiKeyUsageLogging(apiKeyService)
 
     routing {
         get("/") {
@@ -252,4 +268,5 @@ fun Application.module() {
     configureSecretsRoutes(secretsManager)
     configureFeatureFlagRoutes(featureFlagService)
     configureAuditRoutes(auditRetentionService)
+    configureApiKeyRoutes(apiKeyService)
 }

@@ -16,6 +16,8 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.savedstate.read
+import com.beettechnologies.posly.admin.ApiKeyFormScreen
+import com.beettechnologies.posly.admin.ApiKeyListScreen
 import com.beettechnologies.posly.admin.FeatureFlagFormScreen
 import com.beettechnologies.posly.admin.FeatureFlagListScreen
 import com.beettechnologies.posly.admin.FinanceReportsScreen
@@ -64,6 +66,8 @@ private const val ROUTE_FINANCE_REPORTS = "financeReports"
 private const val ROUTE_TRANSACTION_LIST = "transactionList"
 private const val ROUTE_FEATURE_FLAGS = "featureFlags"
 private const val ROUTE_FEATURE_FLAG_FORM = "featureFlagForm"
+private const val ROUTE_API_KEYS = "apiKeys"
+private const val ROUTE_API_KEY_FORM = "apiKeyForm"
 
 private data class TransactionListArgs(
     val storeId: String,
@@ -167,7 +171,8 @@ fun AuthNavHost(
                 onImportProducts = { navController.navigate(ROUTE_IMPORT_PRODUCTS) },
                 onManageDashboard = { navController.navigate(ROUTE_MANAGER_DASHBOARD) },
                 onFinanceReports = { navController.navigate(ROUTE_FINANCE_REPORTS) },
-                onManageFeatureFlags = { navController.navigate(ROUTE_FEATURE_FLAGS) }
+                onManageFeatureFlags = { navController.navigate(ROUTE_FEATURE_FLAGS) },
+                onManageApiKeys = { navController.navigate(ROUTE_API_KEYS) }
             )
         }
         composable(ROUTE_SALE) {
@@ -278,6 +283,18 @@ fun AuthNavHost(
         }
         composable(ROUTE_FEATURE_FLAG_FORM) {
             FeatureFlagFormScreen(
+                onDone = { navController.popBackStack() },
+                onBack = { navController.popBackStack() }
+            )
+        }
+        composable(ROUTE_API_KEYS) {
+            ApiKeyListScreen(
+                onCreateKey = { navController.navigate(ROUTE_API_KEY_FORM) },
+                onBack = { navController.popBackStack() }
+            )
+        }
+        composable(ROUTE_API_KEY_FORM) {
+            ApiKeyFormScreen(
                 onDone = { navController.popBackStack() },
                 onBack = { navController.popBackStack() }
             )
