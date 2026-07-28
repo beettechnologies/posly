@@ -44,3 +44,25 @@ groups:
           summary: "No traces exported from Posly server"
           description: "No spans were exported in the last 10m; check OTLP endpoint and credentials."
           runbook_url: "https://github.com/beettechnologies/posly/blob/main/docs/runbooks/observability-alerts.md"
+
+      - alert: PoslyHeavyAnalyticsRateLimited
+        expr: sum(rate(ktor_http_server_requests_seconds_count{route=~"/reports/pipeline.*|/finance/reports/generate|/finance/reports/schedules/.*/run-now",status="429"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: posly-reporting
+        annotations:
+          summary: "Heavy analytics endpoints are being rate-limited"
+          description: "The shared heavy-analytics token bucket (5 calls/min, see com.beettechnologies.posly.capacity.HeavyAnalyticsRateLimit) has been rejecting requests with 429 for 5m - either a caller is retrying too aggressively, or genuine reporting demand now exceeds the bucket's cap and it may need raising."
+          runbook_url: "https://github.com/beettechnologies/posly/blob/main/docs/runbooks/capacity-scale-incidents.md"
+
+      - alert: PoslyHeavyAnalyticsKillSwitchActive
+        expr: sum(rate(ktor_http_server_requests_seconds_count{route=~"/reports/pipeline.*|/finance/reports/generate|/finance/reports/schedules/.*/run-now",status="503"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: posly-reporting
+        annotations:
+          summary: "The heavy-analytics kill switch is currently blocking requests"
+          description: "Heavy reporting/finance endpoints are returning 503 for 5m, meaning the heavy_analytics_pipeline feature flag is currently disabled (see docs/runbooks/capacity-scale-incidents.md). If this wasn't an intentional, ongoing capacity response, re-enable the flag."
+          runbook_url: "https://github.com/beettechnologies/posly/blob/main/docs/runbooks/capacity-scale-incidents.md"

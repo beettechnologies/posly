@@ -1,11 +1,15 @@
 package com.beettechnologies.posly.reporting
 
 import com.beettechnologies.posly.auth.ErrorResponse
+import com.beettechnologies.posly.capacity.HeavyAnalyticsRateLimit
+import com.beettechnologies.posly.capacity.blockedByHeavyAnalyticsKillSwitch
+import com.beettechnologies.posly.flags.FeatureFlagService
 import com.beettechnologies.posly.model.Role
 import com.beettechnologies.posly.rbac.withRole
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.auth.*
+import io.ktor.server.plugins.ratelimit.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
@@ -15,12 +19,14 @@ private fun parsePeriod(raw: String): ReportPeriod? = runCatching { ReportPeriod
 
 private fun parseInstant(raw: String): Instant? = runCatching { Instant.parse(raw) }.getOrNull()
 
-fun Application.configureReportingRoutes(reportingService: ReportingService) {
+fun Application.configureReportingRoutes(reportingService: ReportingService, featureFlagService: FeatureFlagService) {
     routing {
         authenticate("jwt-auth") {
             route("/reports") {
                 withRole(Role.ADMIN, Role.MANAGER) {
+                    rateLimit(HeavyAnalyticsRateLimit) {
                     post("/pipeline/run") {
+                        if (call.blockedByHeavyAnalyticsKillSwitch(featureFlagService)) return@post
                         val req = runCatching { call.receive<RunPipelineRequest>() }.getOrElse {
                             call.respond(HttpStatusCode.BadRequest, ErrorResponse("Invalid request body"))
                             return@post
@@ -40,6 +46,7 @@ fun Application.configureReportingRoutes(reportingService: ReportingService) {
                     }
 
                     post("/pipeline/backfill") {
+                        if (call.blockedByHeavyAnalyticsKillSwitch(featureFlagService)) return@post
                         val req = runCatching { call.receive<BackfillRequest>() }.getOrElse {
                             call.respond(HttpStatusCode.BadRequest, ErrorResponse("Invalid request body"))
                             return@post
@@ -62,6 +69,7 @@ fun Application.configureReportingRoutes(reportingService: ReportingService) {
                         }
                         val runs = reportingService.backfill(period, from, to, req.storeIds)
                         call.respond(HttpStatusCode.Created, runs.map { it.toResponse() })
+                    }
                     }
 
                     get("/pipeline/runs") {

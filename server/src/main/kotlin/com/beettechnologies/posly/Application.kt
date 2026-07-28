@@ -17,6 +17,7 @@ import com.beettechnologies.posly.cart.CompositeOrderEventListener
 import com.beettechnologies.posly.cart.OrderService
 import com.beettechnologies.posly.cart.configureCartRoutes
 import com.beettechnologies.posly.cart.configureOrderRoutes
+import com.beettechnologies.posly.capacity.HeavyAnalyticsRateLimit
 import com.beettechnologies.posly.catalog.ProductImportService
 import com.beettechnologies.posly.catalog.configureProductImportRoutes
 import com.beettechnologies.posly.db.DatabaseFactory
@@ -72,10 +73,12 @@ import io.ktor.server.auth.jwt.*
 import io.ktor.server.engine.*
 import io.ktor.server.netty.*
 import io.ktor.server.plugins.contentnegotiation.*
+import io.ktor.server.plugins.ratelimit.*
 import io.ktor.server.plugins.statuspages.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import kotlinx.serialization.json.Json
+import kotlin.time.Duration.Companion.seconds
 
 fun main(args: Array<String>): Unit = EngineMain.main(args)
 
@@ -165,6 +168,15 @@ fun Application.module() {
         }
     }
 
+    install(RateLimit) {
+        // One shared bucket across every caller, not per-client: these routes (full pipeline
+        // runs/backfills, ad-hoc finance report generation) are expensive for the server itself,
+        // so the cap protects aggregate capacity rather than giving each client its own quota.
+        register(HeavyAnalyticsRateLimit) {
+            rateLimiter(limit = 5, refillPeriod = 60.seconds)
+        }
+    }
+
     install(Authentication) {
         jwt("jwt-auth") {
             realm = "posly"
@@ -222,8 +234,8 @@ fun Application.module() {
     configureSyncRoutes(offlineSyncService)
     configurePrintRoutes(printerRegistryService, printService)
     configureEmailRoutes(emailService)
-    configureReportingRoutes(reportingService)
-    configureFinanceReportRoutes(financeReportService)
+    configureReportingRoutes(reportingService, featureFlagService)
+    configureFinanceReportRoutes(financeReportService, featureFlagService)
     configureBackupRoutes(backupService, restoreService)
     configureSecretsRoutes(secretsManager)
     configureFeatureFlagRoutes(featureFlagService)

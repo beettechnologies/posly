@@ -87,3 +87,20 @@ module "ecs" {
 
   tags = local.common_tags
 }
+
+# ---------------------------------------------------------------
+# Alerting (capacity + cost)
+# ---------------------------------------------------------------
+module "alerting" {
+  source = "../../modules/alerting"
+
+  env          = local.env
+  cluster_name = module.ecs.cluster_name
+  service_name = module.ecs.service_name
+  max_capacity = 4
+
+  alert_email        = var.alert_email
+  monthly_budget_usd = var.monthly_budget_usd
+
+  tags = local.common_tags
+}

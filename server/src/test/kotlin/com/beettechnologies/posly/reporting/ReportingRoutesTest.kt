@@ -319,4 +319,94 @@ class ReportingRoutesTest {
         val resp = client.get("/reports/cash-on-hand") { header(HttpHeaders.Authorization, "Bearer $token") }
         assertEquals(HttpStatusCode.BadRequest, resp.status)
     }
+
+    // -------------------------------------------------------------------------
+    // Capacity / degradation
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `exceeding the heavy-analytics rate limit returns 429, not 500`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val token = client.loginAs("manager", "manager123")
+
+        // The shared bucket allows 5 heavy-analytics calls per minute; the 6th must be shed.
+        val statuses = (1..6).map { n ->
+            client.post("/reports/pipeline/run") {
+                header(HttpHeaders.Authorization, "Bearer $token")
+                contentType(ContentType.Application.Json)
+                setBody("""{"period":"DAILY"}""")
+            }.status
+        }
+        assertEquals(HttpStatusCode.Created, statuses[0])
+        assertEquals(HttpStatusCode.TooManyRequests, statuses.last(), "expected the 6th call in one minute to be rate-limited: $statuses")
+    }
+
+    @Test
+    fun `light reporting reads are unaffected by the heavy-analytics rate limit`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val token = client.loginAs("manager", "manager123")
+        val storeId = client.createStore()
+
+        // Exhaust the shared heavy-analytics bucket.
+        repeat(6) {
+            client.post("/reports/pipeline/run") {
+                header(HttpHeaders.Authorization, "Bearer $token")
+                contentType(ContentType.Application.Json)
+                setBody("""{"period":"DAILY"}""")
+            }
+        }
+
+        val resp = client.get("/reports/sales?storeId=$storeId") { header(HttpHeaders.Authorization, "Bearer $token") }
+        assertEquals(HttpStatusCode.OK, resp.status, "a plain aggregate read must not share the heavy-analytics rate limit")
+    }
+
+    @Test
+    fun `flipping the heavy-analytics kill switch off returns 503 on the pipeline, leaving reads unaffected`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val adminToken = client.loginAs("admin", "admin123")
+        val managerToken = client.loginAs("manager", "manager123")
+        val storeId = client.createStore()
+
+        val createFlagResp = client.post("/feature-flags") {
+            header(HttpHeaders.Authorization, "Bearer $adminToken")
+            contentType(ContentType.Application.Json)
+            setBody("""{"key":"heavy_analytics_pipeline","description":"Capacity incident lever","enabled":true}""")
+        }
+        assertEquals(HttpStatusCode.Created, createFlagResp.status)
+
+        val disableResp = client.patch("/feature-flags/heavy_analytics_pipeline") {
+            header(HttpHeaders.Authorization, "Bearer $adminToken")
+            contentType(ContentType.Application.Json)
+            setBody("""{"enabled":false}""")
+        }
+        assertEquals(HttpStatusCode.OK, disableResp.status)
+
+        val blockedResp = client.post("/reports/pipeline/run") {
+            header(HttpHeaders.Authorization, "Bearer $managerToken")
+            contentType(ContentType.Application.Json)
+            setBody("""{"period":"DAILY","storeIds":["$storeId"]}""")
+        }
+        assertEquals(HttpStatusCode.ServiceUnavailable, blockedResp.status)
+        assertNotNull(blockedResp.headers[HttpHeaders.RetryAfter])
+
+        val readResp = client.get("/reports/sales?storeId=$storeId") { header(HttpHeaders.Authorization, "Bearer $managerToken") }
+        assertEquals(HttpStatusCode.OK, readResp.status, "a plain aggregate read must not be gated by the heavy-analytics kill switch")
+    }
+
+    @Test
+    fun `the heavy-analytics pipeline works normally when the flag has never been created`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val token = client.loginAs("manager", "manager123")
+
+        val resp = client.post("/reports/pipeline/run") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+            contentType(ContentType.Application.Json)
+            setBody("""{"period":"DAILY"}""")
+        }
+        assertEquals(HttpStatusCode.Created, resp.status, "the kill switch must default to allowed when unprovisioned")
+    }
 }

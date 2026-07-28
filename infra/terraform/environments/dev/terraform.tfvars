@@ -8,3 +8,8 @@ server_image = "REPLACE_WITH_ECR_IMAGE_URI"
 
 # ARN of the CI/CD IAM user/role that will assume the deploy role
 ci_principal_arn = "REPLACE_WITH_CI_PRINCIPAL_ARN"
+
+# Set to a real address (or remove to skip the subscription) before relying on these alerts.
+alert_email = ""
+
+monthly_budget_usd = 200

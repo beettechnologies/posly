@@ -29,3 +29,14 @@ variable "ci_external_id" {
   type        = string
   sensitive   = true
 }
+
+variable "alert_email" {
+  description = "Email address subscribed to capacity/cost alerts. Empty string skips the subscription - should be set to a real on-call address before this environment goes live."
+  type        = string
+  default     = ""
+}
+
+variable "monthly_budget_usd" {
+  description = "Monthly AWS cost budget (USD) that triggers a cost alert"
+  type        = number
+}

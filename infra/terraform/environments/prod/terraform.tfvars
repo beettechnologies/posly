@@ -4,3 +4,8 @@ availability_zones = ["us-east-1a", "us-east-1b", "us-east-1c"]
 
 server_image     = "REPLACE_WITH_ECR_IMAGE_URI"
 ci_principal_arn = "REPLACE_WITH_CI_PRINCIPAL_ARN"
+
+# Set to a real on-call address before this environment goes live.
+alert_email = "REPLACE_WITH_OPS_ALERT_EMAIL"
+
+monthly_budget_usd = 2000

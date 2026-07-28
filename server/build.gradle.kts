@@ -18,6 +18,7 @@ dependencies {
     implementation(libs.ktor.serverAuthJwt)
     implementation(libs.ktor.serverContentNegotiation)
     implementation(libs.ktor.serverStatusPages)
+    implementation(libs.ktor.serverRateLimit)
     implementation(libs.ktor.serializationKotlinxJson)
     implementation(libs.ktor.serverCallId)
     implementation(libs.ktor.serverCallLogging)

@@ -1,12 +1,16 @@
 package com.beettechnologies.posly.finance
 
 import com.beettechnologies.posly.auth.ErrorResponse
+import com.beettechnologies.posly.capacity.HeavyAnalyticsRateLimit
+import com.beettechnologies.posly.capacity.blockedByHeavyAnalyticsKillSwitch
+import com.beettechnologies.posly.flags.FeatureFlagService
 import com.beettechnologies.posly.model.Role
 import com.beettechnologies.posly.rbac.tokenClaims
 import com.beettechnologies.posly.rbac.withRole
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.auth.*
+import io.ktor.server.plugins.ratelimit.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
@@ -20,12 +24,14 @@ private fun parseFormat(raw: String): FinanceReportFormat? = runCatching { Finan
 
 private fun parseFrequency(raw: String): ScheduleFrequency? = runCatching { ScheduleFrequency.valueOf(raw) }.getOrNull()
 
-fun Application.configureFinanceReportRoutes(financeReportService: FinanceReportService) {
+fun Application.configureFinanceReportRoutes(financeReportService: FinanceReportService, featureFlagService: FeatureFlagService) {
     routing {
         authenticate("jwt-auth") {
             route("/finance/reports") {
                 withRole(Role.ADMIN, Role.MANAGER) {
+                    rateLimit(HeavyAnalyticsRateLimit) {
                     get("/generate") {
+                        if (call.blockedByHeavyAnalyticsKillSwitch(featureFlagService)) return@get
                         val storeId = call.request.queryParameters["storeId"] ?: run {
                             call.respond(HttpStatusCode.BadRequest, ErrorResponse("storeId query parameter is required"))
                             return@get
@@ -84,6 +90,7 @@ fun Application.configureFinanceReportRoutes(financeReportService: FinanceReport
                             GenerateReportResult.InvalidRange -> call.respond(HttpStatusCode.BadRequest, ErrorResponse("from must be before to"))
                         }
                     }
+                    }
 
                     get("/schedules") {
                         val storeId = call.request.queryParameters["storeId"]
@@ -134,12 +141,15 @@ fun Application.configureFinanceReportRoutes(financeReportService: FinanceReport
                         else call.respond(HttpStatusCode.NotFound, ErrorResponse("Schedule not found"))
                     }
 
+                    rateLimit(HeavyAnalyticsRateLimit) {
                     post("/schedules/{id}/run-now") {
+                        if (call.blockedByHeavyAnalyticsKillSwitch(featureFlagService)) return@post
                         val id = call.parameters["id"]!!
                         when (val result = financeReportService.runScheduleNow(id)) {
                             is RunScheduleResult.Success -> call.respond(HttpStatusCode.OK, result.run.toResponse())
                             RunScheduleResult.NotFound -> call.respond(HttpStatusCode.NotFound, ErrorResponse("Schedule not found"))
                         }
+                    }
                     }
                 }
             }

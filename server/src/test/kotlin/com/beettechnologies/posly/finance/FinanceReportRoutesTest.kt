@@ -219,4 +219,87 @@ class FinanceReportRoutesTest {
         }
         assertEquals(HttpStatusCode.NotFound, resp.status)
     }
+
+    // -------------------------------------------------------------------------
+    // Capacity / degradation
+    // -------------------------------------------------------------------------
+
+    private fun generateUrl(storeId: String) =
+        "/finance/reports/generate?storeId=$storeId&type=SALES&format=CSV&timezone=UTC&from=2026-01-01T00:00:00Z&to=2026-01-02T00:00:00Z"
+
+    @Test
+    fun `exceeding the heavy-analytics rate limit returns 429 on report generation`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val token = client.loginAs("manager", "manager123")
+        val storeId = client.createStore()
+
+        val statuses = (1..6).map { n ->
+            client.get(generateUrl(storeId)) { header(HttpHeaders.Authorization, "Bearer $token") }.status
+        }
+        assertEquals(HttpStatusCode.OK, statuses[0])
+        assertEquals(HttpStatusCode.TooManyRequests, statuses.last(), "expected the 6th call in one minute to be rate-limited: $statuses")
+    }
+
+    @Test
+    fun `the heavy-analytics rate limit bucket is shared across the reporting pipeline and finance reports`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val managerToken = client.loginAs("manager", "manager123")
+        val storeId = client.createStore()
+
+        repeat(3) {
+            client.post("/reports/pipeline/run") {
+                header(HttpHeaders.Authorization, "Bearer $managerToken")
+                contentType(ContentType.Application.Json)
+                setBody("""{"period":"DAILY","storeIds":["$storeId"]}""")
+            }
+        }
+
+        val statuses = (1..3).map {
+            client.get(generateUrl(storeId)) { header(HttpHeaders.Authorization, "Bearer $managerToken") }.status
+        }
+        assertEquals(HttpStatusCode.TooManyRequests, statuses.last(), "3 pipeline runs + 3 report generations should exhaust the shared 5-call bucket: $statuses")
+    }
+
+    @Test
+    fun `flipping the heavy-analytics kill switch off returns 503 on generate and run-now, leaving schedule listing unaffected`() = testApplication {
+        configureApp()
+        val client = jsonClient()
+        val adminToken = client.loginAs("admin", "admin123")
+        val storeId = client.createStore()
+
+        val createResp = client.post("/finance/reports/schedules") {
+            header(HttpHeaders.Authorization, "Bearer $adminToken")
+            contentType(ContentType.Application.Json)
+            setBody("""{"storeId":"$storeId","type":"SALES","format":"CSV","timezone":"UTC","frequency":"DAILY","recipients":["finance@example.com"]}""")
+        }
+        val scheduleId = Json.parseToJsonElement(createResp.bodyAsText()).jsonObject["id"]!!.jsonPrimitive.content
+
+        val createFlagResp = client.post("/feature-flags") {
+            header(HttpHeaders.Authorization, "Bearer $adminToken")
+            contentType(ContentType.Application.Json)
+            setBody("""{"key":"heavy_analytics_pipeline","description":"Capacity incident lever","enabled":true}""")
+        }
+        assertEquals(HttpStatusCode.Created, createFlagResp.status)
+        client.patch("/feature-flags/heavy_analytics_pipeline") {
+            header(HttpHeaders.Authorization, "Bearer $adminToken")
+            contentType(ContentType.Application.Json)
+            setBody("""{"enabled":false}""")
+        }
+
+        val generateResp = client.get(generateUrl(storeId)) { header(HttpHeaders.Authorization, "Bearer $adminToken") }
+        assertEquals(HttpStatusCode.ServiceUnavailable, generateResp.status)
+        assertNotNull(generateResp.headers[HttpHeaders.RetryAfter])
+
+        val runNowResp = client.post("/finance/reports/schedules/$scheduleId/run-now") {
+            header(HttpHeaders.Authorization, "Bearer $adminToken")
+        }
+        assertEquals(HttpStatusCode.ServiceUnavailable, runNowResp.status)
+
+        val listResp = client.get("/finance/reports/schedules?storeId=$storeId") {
+            header(HttpHeaders.Authorization, "Bearer $adminToken")
+        }
+        assertEquals(HttpStatusCode.OK, listResp.status, "listing schedules is a light read and must not be gated by the kill switch")
+    }
 }
