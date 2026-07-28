@@ -1,0 +1,85 @@
+# Alertmanager routing/receiver config for the rules in ../prometheus/alerts.yml.
+#
+# Deployment mechanism (which Alertmanager instance loads this file, how it's deployed/reloaded)
+# is intentionally out of scope here, matching this repo's existing precedent: alerts.yml itself
+# ships with no accompanying Prometheus/Alertmanager deployment manifest either - both are
+# config-as-code for whatever Prometheus/Alertmanager instance an operator points at this repo.
+#
+# UNVALIDATED AGAINST A REAL PAGERDUTY OR SLACK WORKSPACE - no live credentials exist in this
+# environment (same disclosed-limitation precedent as SECURITY_COMPLIANCE.md's other vendor
+# integrations this codebase doesn't have sandbox access to). The structure (routes, receivers,
+# grouping, inhibition) is genuine Alertmanager config; only the `routing_key`/`api_url` values
+# below are placeholders that must be replaced - via a secrets-injected copy of this file, not by
+# committing real credentials - before this is wired to an actual on-call rotation.
+
+global:
+  resolve_timeout: 5m
+
+route:
+  # Every alert must carry `service` (see alerts.yml) so it's identifiable without opening a
+  # dashboard - this is the "contextual data" half of the ticket's acceptance criteria.
+  group_by: ['alertname', 'service']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  receiver: slack-default
+
+  routes:
+    # severity: page (see alerts.yml's PoslyAuth5xxRateHigh, PoslyPayments5xxRateHigh,
+    # PoslyTerminalsOffline, etc.) - paged immediately, repeated hourly until acknowledged/resolved.
+    - matchers: ['severity="page"']
+      receiver: pagerduty-critical
+      group_wait: 10s
+      repeat_interval: 1h
+      continue: true
+
+    # Everything paged also posts to Slack, so the wider team sees it without needing PagerDuty access.
+    - matchers: ['severity="page"']
+      receiver: slack-incidents
+
+    # severity: warning - Slack only, not paged, standard 4h repeat.
+    - matchers: ['severity="warning"']
+      receiver: slack-warnings
+
+# A firing "page" for a service suppresses that same service's "warning" alerts - avoids paging
+# AND separately Slack-warning-spamming for what's really one incident (e.g. PoslyPayments5xxRateHigh
+# paging while PoslyAuthP95LatencyHigh warns, if they're ever the same underlying outage for the
+# same `service` label).
+inhibit_rules:
+  - source_matchers: ['severity="page"']
+    target_matchers: ['severity="warning"']
+    equal: ['service']
+
+receivers:
+  - name: slack-default
+    slack_configs:
+      - api_url: "REPLACE_WITH_SLACK_WEBHOOK_URL"
+        channel: "#posly-alerts"
+        send_resolved: true
+
+  - name: slack-warnings
+    slack_configs:
+      - api_url: "REPLACE_WITH_SLACK_WEBHOOK_URL"
+        channel: "#posly-alerts-warnings"
+        send_resolved: true
+        title: '{{ .CommonAnnotations.summary }}'
+        text: '{{ .CommonAnnotations.description }}\n\nRunbook: {{ .CommonAnnotations.runbook_url }}'
+
+  - name: slack-incidents
+    slack_configs:
+      - api_url: "REPLACE_WITH_SLACK_WEBHOOK_URL"
+        channel: "#posly-incidents"
+        send_resolved: true
+        title: '🚨 {{ .CommonAnnotations.summary }}'
+        text: '{{ .CommonAnnotations.description }}\n\nRunbook: {{ .CommonAnnotations.runbook_url }}'
+
+  - name: pagerduty-critical
+    pagerduty_configs:
+      - routing_key: "REPLACE_WITH_PAGERDUTY_ROUTING_KEY"
+        description: '{{ .CommonAnnotations.summary }}'
+        severity: critical
+        details:
+          service: '{{ .CommonLabels.service }}'
+          description: '{{ .CommonAnnotations.description }}'
+          runbook_url: '{{ .CommonAnnotations.runbook_url }}'
+          num_firing: '{{ .Alerts.Firing | len }}'

@@ -66,3 +66,14 @@ groups:
           summary: "The heavy-analytics kill switch is currently blocking requests"
           description: "Heavy reporting/finance endpoints are returning 503 for 5m, meaning the heavy_analytics_pipeline feature flag is currently disabled (see docs/runbooks/capacity-scale-incidents.md). If this wasn't an intentional, ongoing capacity response, re-enable the flag."
           runbook_url: "https://github.com/beettechnologies/posly/blob/main/docs/runbooks/capacity-scale-incidents.md"
+
+      - alert: PoslyTerminalsOffline
+        expr: posly_printers_offline + posly_devices_offline > 0
+        for: 10m
+        labels:
+          severity: page
+          service: posly-terminals
+        annotations:
+          summary: "One or more store terminals/printers have been offline for 10+ minutes"
+          description: "posly_printers_offline (explicitly set OFFLINE) and/or posly_devices_offline (no heartbeat in 5m, see HEARTBEAT_OFFLINE_THRESHOLD_SECONDS) is nonzero. Check GET /printers and GET /devices to identify which store/device."
+          runbook_url: "https://github.com/beettechnologies/posly/blob/main/docs/runbooks/terminal-offline.md"

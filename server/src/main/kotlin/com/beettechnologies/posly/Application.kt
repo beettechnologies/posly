@@ -21,6 +21,7 @@ import com.beettechnologies.posly.capacity.HeavyAnalyticsRateLimit
 import com.beettechnologies.posly.catalog.ProductImportService
 import com.beettechnologies.posly.catalog.configureProductImportRoutes
 import com.beettechnologies.posly.db.DatabaseFactory
+import com.beettechnologies.posly.devices.DeviceHealthStatus
 import com.beettechnologies.posly.devices.DeviceRegistryService
 import com.beettechnologies.posly.devices.configureDeviceRoutes
 import com.beettechnologies.posly.email.EmailService
@@ -41,6 +42,7 @@ import com.beettechnologies.posly.payments.SimulatorPaymentGateway
 import com.beettechnologies.posly.payments.configurePaymentRoutes
 import com.beettechnologies.posly.printing.PrintService
 import com.beettechnologies.posly.printing.PrinterRegistryService
+import com.beettechnologies.posly.printing.PrinterStatus
 import com.beettechnologies.posly.printing.SimulatorPrintGateway
 import com.beettechnologies.posly.printing.configurePrintRoutes
 import com.beettechnologies.posly.products.ProductService
@@ -78,6 +80,7 @@ import io.ktor.server.plugins.statuspages.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import kotlinx.serialization.json.Json
+import java.time.Instant
 import kotlin.time.Duration.Companion.seconds
 
 fun main(args: Array<String>): Unit = EngineMain.main(args)
@@ -140,6 +143,15 @@ fun Application.module() {
     val productImportService = ProductImportService(productService, importScope = this)
     val printerRegistryService = PrinterRegistryService()
     val printService = PrintService(orderService, printerRegistryService, SimulatorPrintGateway(), storeService)
+    // Scraped on every /metrics poll, not cached: PoslyTerminalsOffline (see
+    // infra/observability/prometheus/alerts.yml) alerts on this directly, so it must reflect the
+    // registries' current state, not a snapshot taken at startup.
+    meterRegistry.gauge("posly_printers_offline", printerRegistryService) { registry ->
+        registry.listPrinters().count { it.status == PrinterStatus.OFFLINE }.toDouble()
+    }
+    meterRegistry.gauge("posly_devices_offline", deviceRegistryService) { registry ->
+        registry.listDevices().count { it.healthStatus(Instant.now()) == DeviceHealthStatus.OFFLINE }.toDouble()
+    }
     val emailGateway = SimulatorEmailGateway()
     val emailService = EmailService(orderService, emailGateway, storeService)
     val financeReportService = FinanceReportService(
