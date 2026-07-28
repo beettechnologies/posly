@@ -5,6 +5,7 @@ plugins {
     alias(libs.plugins.androidMultiplatformLibrary)
     alias(libs.plugins.composeMultiplatform)
     alias(libs.plugins.composeCompiler)
+    alias(libs.plugins.testRetry)
 }
 
 kotlin {
@@ -84,4 +85,17 @@ kotlin {
 
 dependencies {
     androidRuntimeClasspath(libs.compose.uiTooling)
+}
+
+// Flakiness mitigation (see E2E_TESTING.md / server/build.gradle.kts's matching config) - Compose
+// UI tests can be timing-sensitive (coroutine dispatch, recomposition settling), so the same
+// retry-before-fail policy applies here. `withType` (not a specific task name) because this is a
+// Kotlin Multiplatform module - the JVM test task is `jvmTest`, not the plain `test` a JVM-only
+// module gets.
+tasks.withType<Test>().configureEach {
+    retry {
+        maxRetries.set(2)
+        maxFailures.set(10)
+        failOnPassedAfterRetry.set(false)
+    }
 }

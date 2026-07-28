@@ -37,6 +37,7 @@ pdfbox = "3.0.5"
 opentelemetry-instrumentation = "2.18.1-alpha"
 opentelemetry-sdk = "1.52.0"
 postgresql = "42.7.13"
+testRetryPlugin = "1.6.5"
 zxing = "3.5.4"
 
 [libraries]
@@ -124,3 +125,4 @@ kotlinJvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
 kotlinSerialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 ktor = { id = "io.ktor.plugin", version.ref = "ktor" }
+testRetry = { id = "org.gradle.test-retry", version.ref = "testRetryPlugin" }

@@ -1,0 +1,61 @@
+name: Synthetic Monitor
+
+# Runs scripts/synthetic/monitor.sh continuously against a live environment - the "synthetic
+# monitors running in prod" half of the e2e-testing ticket's DoD, distinct from
+# scripts/smoke-test.sh (which only runs once, immediately after a deploy - see deploy.yml).
+#
+# UNVALIDATED AGAINST A REAL LIVE DEPLOYMENT: no AWS account/live environment is reachable from
+# this repo's development environment (same disclosed limitation as
+# docs/runbooks/capacity-scale-incidents.md's Terraform, infra/terraform/modules/alerting, etc.).
+# scripts/synthetic/monitor.sh itself has been run and verified end to end (both tiers, plus a
+# deliberate credential-failure case) against a local :server:run instance - see its own header
+# comment and E2E_TESTING.md.
+#
+# Required repository secrets (see E2E_TESTING.md for how to provision them):
+#   SYNTHETIC_BASE_URL       - the environment to monitor, e.g. https://api.posly.example
+#   SYNTHETIC_USERNAME       - a dedicated monitoring account (never the demo admin/admin123 seed)
+#   SYNTHETIC_PASSWORD
+#   SYNTHETIC_STORE_ID       - optional: a pre-provisioned store id, scoped and excluded from real
+#                              dashboards, enabling the full cart->checkout->pay->refund tier.
+#                              Omit to run only the health/authenticated-read tier.
+#
+# If SYNTHETIC_BASE_URL isn't configured, every run below is skipped rather than failing noisily -
+# see each job step's `if:` guard.
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: synthetic-monitor
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    name: Run synthetic monitor
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # The `secrets` context can't be read directly in a step's `if:` (GitHub Actions restriction) -
+    # so its presence is captured into a plain job-level env var first, which `if:` can read.
+    env:
+      HAS_BASE_URL: ${{ secrets.SYNTHETIC_BASE_URL != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run synthetic monitor
+        if: ${{ env.HAS_BASE_URL == 'true' }}
+        env:
+          BASE_URL: ${{ secrets.SYNTHETIC_BASE_URL }}
+          SYNTHETIC_USERNAME: ${{ secrets.SYNTHETIC_USERNAME }}
+          SYNTHETIC_PASSWORD: ${{ secrets.SYNTHETIC_PASSWORD }}
+          SYNTHETIC_STORE_ID: ${{ secrets.SYNTHETIC_STORE_ID }}
+        run: |
+          chmod +x scripts/synthetic/monitor.sh
+          scripts/synthetic/monitor.sh
+
+      - name: Skipped - no environment configured
+        if: ${{ env.HAS_BASE_URL != 'true' }}
+        run: |
+          echo "SYNTHETIC_BASE_URL is not set - nothing to monitor yet. See E2E_TESTING.md for setup."

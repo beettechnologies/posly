@@ -102,6 +102,42 @@ jobs:
             app/sharedUI/build/test-results/
           retention-days: 7
 
+  e2e:
+    name: E2E Tests (POS -> Payment -> Receipt -> Sync -> Refund)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: temurin
+          cache: gradle
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      # A distinct, independently-named required check (see E2E_TESTING.md) so a PR can be gated
+      # specifically on the full purchase-lifecycle flow, not just on the broader unit/integration
+      # suite in `lint-and-test` (which also runs this same test as part of :server:test - the
+      # duplication is deliberate: this job's value is being a separately visible/gatable status,
+      # not avoiding a second ~3s test run).
+      - name: Run e2e suite
+        run: ./gradlew :server:test --tests "com.beettechnologies.posly.e2e.*" --no-daemon
+
+      - name: Upload e2e test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-test-reports
+          path: |
+            server/build/reports/tests/
+            server/build/test-results/
+          retention-days: 7
+
   security-scan:
     name: Security Scan
     runs-on: ubuntu-latest
@@ -166,15 +202,15 @@ jobs:
     name: Build Status
     runs-on: ubuntu-latest
     permissions: {}
-    needs: [lint-and-test, android-checks, security-scan]
+    needs: [lint-and-test, android-checks, e2e, security-scan]
     if: always()
     steps:
       - name: All checks passed
-        if: ${{ needs.lint-and-test.result == 'success' && needs.android-checks.result == 'success' && needs.security-scan.result == 'success' }}
+        if: ${{ needs.lint-and-test.result == 'success' && needs.android-checks.result == 'success' && needs.e2e.result == 'success' && needs.security-scan.result == 'success' }}
         run: echo "All CI checks passed."
 
       - name: Fail if any check failed
-        if: ${{ needs.lint-and-test.result == 'failure' || needs.android-checks.result == 'failure' || needs.security-scan.result == 'failure' }}
+        if: ${{ needs.lint-and-test.result == 'failure' || needs.android-checks.result == 'failure' || needs.e2e.result == 'failure' || needs.security-scan.result == 'failure' }}
         run: |
           echo "One or more CI checks failed."
           exit 1
